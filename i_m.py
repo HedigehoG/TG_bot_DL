@@ -33,6 +33,9 @@ from aiogram.types import Message, URLInputFile, InputMediaVideo, BufferedInputF
 from aiogram.enums import ParseMode, ChatAction
 from aiogram.exceptions import TelegramAPIError
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiohttp import web
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
 
 import redis.asyncio as redis
 
@@ -62,6 +65,18 @@ if not GOOGLE_API_KEY: exit("GOOGLE_API_KEY is not set")
 client = genai.Client() # the API is automatically loaded from the environement variable
 MODEL_20 = "gemini-2.0-flash"
 MODEL_25 = "gemini-2.5-flash"
+
+# --- Webhook settings ---
+WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
+# Путь для вебхука. Использование токена в пути — простая мера безопасности.
+WEBHOOK_PATH = f"/bot/{TELEGRAM_TOKEN}"
+BASE_WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+# --- Web server settings ---
+# Адрес и порт, который будет слушать веб-сервер внутри контейнера.
+WEB_SERVER_HOST = "0.0.0.0"
+WEB_SERVER_PORT = int(os.getenv("LISTEN_PORT", 8080))
 
 # --- Redis ---
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
@@ -104,8 +119,6 @@ if os.getenv("DEBUG_MODE") == "1":
 # --- Bot и Dispatcher ---
 bot = Bot(token=TELEGRAM_TOKEN) #,session=my_custom_session
 dp = Dispatcher()
-should_restart = False
-shutdown_event = asyncio.Event()
 
 # --- Глобальный кэш для клиентов Instagrapi ---
 INSTA_CLIENTS_CACHE = {}
@@ -436,33 +449,6 @@ async def cmd_iglogout(message: Message):
 		logging.info(f"Клиент для user {user_id} удален из кэша памяти.")
 	deleted_count = await r.hdel(f"{INSTA_REDIS_KEY}:user0", user_id)
 	await message.reply("✅ Вы вышли из системы." if deleted_count > 0 else "🤔 Вы и так не были авторизованы.")
-
-# Команда для управления ботом (остановка/перезапуск)
-@dp.message(Command("stop_b"))
-async def cmd_manage_bot(message: Message, command: CommandObject):
-	"""Управляет остановкой и перезапуском бота с помощью ключей."""
-	user_id = str(message.from_user.id)
-	if user_id not in TG_IDS:
-		await message.answer("⛔ У вас нет прав для выполнения этой команды.")
-		logging.warning(f"Попытка несанкционированного управления ботом от {user_id}")
-		return
-
-	arg = command.args.strip() if command.args else None
-	if arg == '-r':
-		logging.info(f"Получена команда на перезапуск от {user_id}")
-		await message.answer("🤖 Перезапускаюсь...")
-		global should_restart
-		should_restart = True
-		shutdown_event.set()
-	elif arg == '-h':
-		logging.info(f"Получена команда на остановку от {user_id}")
-		await message.answer("🤖 Бот останавливается...")
-		shutdown_event.set()
-	else:
-		await message.answer(
-			"<b>Неверный ключ.</b>\nИспользуйте:\n<code>/stop_b -r</code> — для перезапуска\n<code>/stop_b -h</code> — для остановки (halt)",
-			parse_mode=ParseMode.HTML
-		)
 
 # --- ОБРАБОТЧИКИ --------------------------------------------------------------------------
 		
@@ -1372,34 +1358,65 @@ async def handle_chat_request(message: Message, text: str):
 		await p_msg.edit_text("😕 Мой AI-мозг временно перегружен.")
 
 
-# --- ОСНОВНАЯ ФУНКЦИЯ ЗАПУСКА ---
+async def on_startup(bot: Bot) -> None:
+	"""Действия при запуске бота: установка вебхука."""
+	# Проверяем, что все необходимые переменные для вебхука установлены
+	if not all([WEBHOOK_HOST, WEBHOOK_SECRET]):
+		logging.critical("WEBHOOK_HOST или WEBHOOK_SECRET не установлены! Бот не может запуститься в режиме вебхука.")
+		# Это приведет к остановке приложения, если оно запущено через asyncio.run()
+		# и Docker healthcheck провалится.
+		sys.exit(1)
+	
+	await bot.set_webhook(url=BASE_WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+	logging.info(f"Вебхук установлен на {BASE_WEBHOOK_URL}")
+
+async def on_shutdown(bot: Bot) -> None:
+	"""Действия при остановке бота: удаление вебхука и закрытие соединений."""
+	logging.info("Остановка бота...")
+	await bot.delete_webhook()
+	logging.info("Вебхук удален.")
+	await r.close()
+	logging.info("Соединение с Redis закрыто.")
+
 async def main():
-	# Регистрируем асинхронное закрытие Redis-соединения при остановке
-	dp.shutdown.register(r.close)
+	# Регистрируем обработчики жизненного цикла
+	dp.startup.register(on_startup)
+	dp.shutdown.register(on_shutdown)
 
-	logging.info("✅ Бот запущен")
-	
-	polling_task = asyncio.create_task(dp.start_polling(bot))
+	# Создаем приложение aiohttp
+	app = web.Application()
 
-	await shutdown_event.wait()
+	# Создаем эндпоинт для healthcheck, который требует docker-compose.yml
+	async def health_check(request: web.Request) -> web.Response:
+		return web.Response(text="OK")
+	app.router.add_get("/health", health_check)
 
-	logging.info("Получена команда на остановку. Завершаю работу...")
-	polling_task.cancel()
-	
-	try:
-		await polling_task
-	except asyncio.CancelledError:
-		pass # Ожидаемое исключение при отмене
+	# Создаем обработчик вебхуков
+	webhook_requests_handler = SimpleRequestHandler(
+		dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET,
+	)
+	# Регистрируем его в приложении
+	webhook_requests_handler.register(app, path=WEBHOOK_PATH)
 
-	logging.info("✅ Бот остановлен.")
+	# "Монтируем" диспетчер и бота в приложение aiohttp
+	setup_application(app, dp, bot=bot)
+
+	# Запускаем веб-сервер
+	runner = web.AppRunner(app)
+	await runner.setup()
+	site = web.TCPSite(runner, WEB_SERVER_HOST, WEB_SERVER_PORT)
+	logging.info(f"✅ Бот запущен в режиме webhook на http://{WEB_SERVER_HOST}:{WEB_SERVER_PORT}")
+	await site.start()
+
+	# Бесконечно ждем, пока приложение не будет остановлено
+	await asyncio.Event().wait()
 
 if __name__ == "__main__":
+	logging.info("Запуск бота...")
 	try:
 		asyncio.run(main())
-	except (KeyboardInterrupt, SystemExit):
-		logging.info("Бот остановлен вручную (Ctrl+C).")
-	
-	if should_restart:
-		logging.info("Выполняю перезапуск скрипта...")
-		# Заменяем текущий процесс новым, эффективно перезапуская скрипт
-		os.execv(sys.executable, ['python'] + sys.argv)
+	except (KeyboardInterrupt, SystemExit) as e:
+		if isinstance(e, SystemExit) and e.code != 0:
+			 logging.critical("Бот остановлен из-за критической ошибки при запуске.")
+		else:
+			 logging.info("Бот остановлен.")
