@@ -1,0 +1,39 @@
+# .github/workflows/cleanup.yml
+name: "\U0001F6A8 Cleanup Server"
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: 'ОПАСНО! Это действие полностью удалит бота и все его данные с сервера. Для подтверждения введите имя репозитория (например, user/repo).'
+        required: true
+
+jobs:
+  cleanup:
+    name: 'Удаление бота с сервера'
+    runs-on: ubuntu-latest
+    if: github.repository == github.event.inputs.confirmation
+
+    steps:
+      - name: 'Проверка подтверждения'
+        run: |
+          echo "Подтверждение получено. Запускаем удаление для репозитория ${{ github.repository }}..."
+
+      - name: 'Выполнение скрипта очистки на сервере'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: ${{ secrets.CLEANUP_COMMAND }}
+
+  cancel-on-wrong-confirmation:
+    name: 'Отмена - неверное подтверждение'
+    runs-on: ubuntu-latest
+    if: github.repository != github.event.inputs.confirmation
+    steps:
+      - name: 'Вывод ошибки'
+        run: |
+          echo "ОШИБКА: Введенное имя репозитория ('${{ github.event.inputs.confirmation }}') не совпадает с текущим ('${{ github.repository }}')."
+          echo "Удаление отменено."
+          exit 1

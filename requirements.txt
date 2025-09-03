@@ -1,0 +1,13 @@
+requests
+debugpy
+python-dotenv
+instagrapi
+pydantic
+google-generativeai
+aiogram
+aiohttp
+aiohttp-socks
+redis
+beautifulsoup4
+stem
+pyshorteners

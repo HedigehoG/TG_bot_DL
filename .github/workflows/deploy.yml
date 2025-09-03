@@ -1,0 +1,216 @@
+name: Build and Deploy Bot
+
+on:
+  # 1. Позволяет запускать воркфлоу вручную из вкладки Actions в GitHub
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Действие для выполнения'
+        required: true
+        default: 'build_and_deploy'
+        type: choice
+        options:
+          - build_and_deploy
+          - build_only
+          - deploy_only
+          - stop
+          - debug
+
+  # 2. Автоматически запускает сборку и деплой при пуше в `main`
+  push:
+    branches:
+      - main
+
+# Ограничиваем права, которые есть у временного токена GITHUB_TOKEN.
+# Это лучшая практика для безопасности, предотвращающая нежелательные действия.
+permissions:
+  contents: read      # Нужно для чтения кода
+  packages: write     # Нужно для публикации образа в GHCR
+
+jobs:
+  build:
+    name: Build Docker Image
+    # Запускаем сборку если:
+    # - это пуш в main
+    # - вручную выбрано 'build_and_deploy' или 'build_only'
+    if: |
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && (github.event.inputs.action == 'build_and_deploy' || github.event.inputs.action == 'build_only'))
+    runs-on: ubuntu-latest
+    outputs:
+      image_tags: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io # GitHub Container Registry
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          # Создаем два тега:
+          # 1. 'latest' для пушей в основную ветку (main)
+          # 2. Короткий хеш коммита (например, 1234abcd) для уникальной идентификации каждой сборки
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }} # Используем теги из предыдущего шага
+          labels: ${{ steps.meta.outputs.labels }}
+          # Включаем кэширование слоев Docker для ускорения последующих сборок
+          cache-from: type=gha,scope=${{ github.workflow }}
+          cache-to: type=gha,scope=${{ github.workflow }},mode=max
+
+  deploy:
+    name: Deploy to Server
+    # Запускаем деплой если:
+    # - это пуш в main (после сборки)
+    # - вручную выбрано 'build_and_deploy' (после сборки)
+    # - вручную выбрано 'deploy_only'
+    needs: build
+    if: |
+      always() && needs.build.result != 'failure' && (
+        (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'build_and_deploy')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'deploy_only')
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.SSH_HOST }}" ]; then echo "::error title=Missing Secret::SSH_HOST is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_USER }}" ]; then echo "::error title=Missing Secret::SSH_USER is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then echo "::error title=Missing Secret::SSH_PRIVATE_KEY is not set."; exit 1; fi
+          if [ -z "${{ secrets.BOT_TOKEN }}" ]; then echo "::error title=Missing Secret::BOT_TOKEN is not set."; exit 1; fi
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            cd /home/${{ secrets.SSH_USER }}
+            
+            echo "--- Ensuring production mode (disabling debug) ---"
+            
+            echo "1. Removing DEBUG_MODE from .env file"
+            # Удаляем строку, если она существует. Игнорируем ошибку, если ее нет.
+            grep -v '^DEBUG_MODE=' .env > .env.tmp && mv .env.tmp .env
+
+            echo "2. Commenting out debug port in docker-compose.yml"
+            # Комментируем строку, если она еще не закомментирована.
+            # Этот sed ищет строку, начинающуюся с пробелов и "- "5678:5678"", и добавляет "# " после пробелов.
+            sed -i -E 's/^(\s*)(\- "5678:5678")/\1# \2/' docker-compose.yml
+
+            # Определяем, какой образ разворачивать.
+            # Для 'deploy_only' берем 'latest', для остальных - конкретный тег сборки.
+            # Примечание: для 'deploy_only' можно добавить input для указания конкретного тега.
+            IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
+            # Берем первый тег из списка (это будет хеш коммита, если он есть, или latest)
+            export BOT_IMAGE=$(echo "$IMAGE_TAGS" | head -n 1)
+            
+            echo "--- Deploying image: ${BOT_IMAGE}"
+
+            echo "--- Updating .env file with BOT_TOKEN"
+            # Надежно обновляем или добавляем BOT_TOKEN
+            grep -qF 'BOT_TOKEN=' .env && sed -i 's|BOT_TOKEN=.*|BOT_TOKEN=${{ secrets.BOT_TOKEN }}|' .env || echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" >> .env
+
+            echo "--- Pulling new image"
+            docker compose pull
+
+            echo "--- Restarting container"
+            docker compose up -d --force-recreate --remove-orphans
+
+            echo "--- Waiting for container to initialize..."
+            sleep 15
+
+            echo "--- First 20 lines of container log ---"
+            # docker compose ps -q bot вернет ID контейнера для сервиса 'bot'.
+            # docker logs без флага -f выводит текущие логи и завершается.
+            # head -n 20 отбирает первые 20 строк.
+            docker logs "$(docker compose ps -q bot)" | head -n 20
+            echo "---------------------------------------"
+
+            echo "--- Pruning old images"
+            docker image prune -af
+
+  stop:
+    name: Stop Bot
+    # Запускаем остановку только если выбрано вручную
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'stop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.SSH_HOST }}" ]; then echo "::error title=Missing Secret::SSH_HOST is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_USER }}" ]; then echo "::error title=Missing Secret::SSH_USER is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then echo "::error title=Missing Secret::SSH_PRIVATE_KEY is not set."; exit 1; fi
+      - name: Stop bot on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            cd /home/${{ secrets.SSH_USER }}
+            echo "--- Stopping bot..."
+            docker compose down
+            echo "--- Bot stopped."
+
+  debug:
+    name: Start in Debug Mode
+    # Запускаем только если выбрано вручную
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'debug'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate secrets
+        run: |
+          if [ -z "${{ secrets.SSH_HOST }}" ]; then echo "::error title=Missing Secret::SSH_HOST is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_USER }}" ]; then echo "::error title=Missing Secret::SSH_USER is not set."; exit 1; fi
+          if [ -z "${{ secrets.SSH_PRIVATE_KEY }}" ]; then echo "::error title=Missing Secret::SSH_PRIVATE_KEY is not set."; exit 1; fi
+      - name: Enable debug mode on server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script: |
+            set -euo pipefail
+            cd /home/${{ secrets.SSH_USER }}
+            
+            echo "--- Enabling debug mode ---"
+
+            echo "1. Adding DEBUG_MODE=1 to .env file"
+            # Удаляем старую строку, если она есть, и добавляем новую для идемпотентности.
+            grep -v '^DEBUG_MODE=' .env > .env.tmp && mv .env.tmp .env
+            echo "DEBUG_MODE=1" >> .env
+
+            echo "2. Uncommenting debug port in docker-compose.yml"
+            # Раскомментируем строку, если она закомментирована.
+            # Этот sed ищет строку, начинающуюся с пробелов, #, еще пробелов и "- "5678:5678"", и заменяет ее на ту же строку без #.
+            sed -i -E 's/^(\s*)#\s*(- "5678:5678")/\1\2/' docker-compose.yml
+
+            echo "3. Restarting container with new settings"
+            docker compose up -d --force-recreate --remove-orphans
+
+            echo "--- Debug mode enabled. Waiting for container... ---"
+            sleep 15
+            docker logs "$(docker compose ps -q bot)" | tail -n 20
