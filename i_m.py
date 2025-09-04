@@ -1398,9 +1398,9 @@ async def on_startup(bot: Bot) -> None:
 		else:
 			logging.info(f"Вебхук уже установлен на {BASE_WEBHOOK_URL}. Пропускаем установку.")
 
-	except TelegramBadRequest as e:
+	except TelegramAPIError as e:
 		# Обрабатываем конкретные ошибки, которые могут возникнуть при установке вебхука
-		if "Failed to resolve host" in e.message:
+		if "Failed to resolve host" in str(e):
 			logging.critical(
 				f"Критическая ошибка: Telegram не может разрешить хост '{WEBHOOK_HOST}'. "
 				"Возможные причины:\n"
