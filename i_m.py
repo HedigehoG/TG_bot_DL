@@ -183,26 +183,57 @@ The user's message will be provided as the main content to process. Analyze it a
 			model=MODEL_20,			
 			contents=text,
 			config=GenerateContentConfig(
-				tools=[Tool(google_search=GoogleSearch())],
+				tools=[Tool(googleSearch=GoogleSearch()),],
 				response_mime_type="application/json",
 				system_instruction=prompt,
 			),
-		)
-		# Проверяем, что ответ не пустой и не был заблокирован.
-		# Это предотвращает ошибку 'Expecting value: line 1 column 1 (char 0)'.
-		if not response.text:
-			logging.error(f"Ошибка классификации AI Gemini: Модель вернула пустой ответ. Feedback: {response.prompt_feedback}")
-			return {"type": "chat", "content": text}
+		) # response.text будет сырой строкой от Gemini
 
-		return json.loads(response.text)
-	except json.JSONDecodeError as e:
-		# Эта ошибка возникает, если ответ модели — не пустой, но невалидный JSON.
-		# Логируем сам ответ, чтобы понять, что пошло не так.
-		logging.error(f"Ошибка декодирования JSON от Gemini: {e}. Ответ модели: '{response.text}'")
-		return {"type": "chat", "content": text}
+		# Используем новую вспомогательную функцию для надежного парсинга JSON.
+		# Она обрабатывает пустые ответы, markdown-обертки и лишние данные.
+		return parse_gemini_json_response(response.text, text)
+
 	except Exception as e:
-		logging.error(f"Ошибка классификации AI Gemini: {e}")
+		# Ловим любые другие неожиданные ошибки при запросе к Gemini API.
+		logging.error(f"Ошибка классификации AI Gemini (общая): {e}")
 		return {"type": "chat", "content": text}
+
+
+def parse_gemini_json_response(raw_text: str, original_input_text: str) -> dict:
+	"""
+	Парсит сырой текстовый ответ от Gemini, пытаясь извлечь один
+	валидный JSON-объект, обрабатывая markdown-обертки и потенциально
+	множественные/некорректные выводы.
+	"""
+	if not raw_text:
+		logging.error(f"Gemini вернул пустой ответ. Feedback: {raw_text}")
+		return {"type": "chat", "content": original_input_text}
+
+	# Шаг 1: Очищаем текст от markdown-оберток (```json или ```)
+	cleaned_text = re.sub(r'^\s*```(?:json)?\s*|\s*```\s*$', '', raw_text, flags=re.DOTALL).strip()
+
+	if not cleaned_text:
+		logging.error(f"Ответ Gemini стал пустым после удаления markdown. Оригинальный ответ: '{raw_text}'")
+		return {"type": "chat", "content": original_input_text}
+
+	try:
+		# Пытаемся декодировать первый JSON-объект из очищенной строки.
+		decoder = json.JSONDecoder()
+		parsed_obj, end_idx = decoder.raw_decode(cleaned_text)
+
+		# Проверяем, есть ли какие-либо дополнительные данные после первого JSON-объекта.
+		remaining_text = cleaned_text[end_idx:].strip()
+		if remaining_text:
+			logging.warning(f"Gemini вернул дополнительные данные после первого JSON-объекта. Остаток: '{remaining_text}'. Оригинальный ответ: '{raw_text}'")
+		
+		return parsed_obj
+
+	except json.JSONDecodeError as e:
+		logging.error(f"Не удалось декодировать JSON из ответа Gemini: {e}. Очищенный текст: '{cleaned_text}'. Оригинальный сырой ответ: '{raw_text}'")
+		return {"type": "chat", "content": original_input_text}
+	except Exception as e:
+		logging.error(f"Неожиданная ошибка при парсинге JSON от Gemini: {e}. Оригинальный сырой ответ: '{raw_text}'")
+		return {"type": "chat", "content": original_input_text}
 
 
 import pyshorteners
