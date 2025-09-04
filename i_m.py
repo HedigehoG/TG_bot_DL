@@ -73,8 +73,10 @@ MODEL_25 = "gemini-2.5-flash"
 # --- Webhook settings ---
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-# Путь для вебхука. Использование токена в пути — простая мера безопасности.
-WEBHOOK_PATH = f"/bot{BOT_TOKEN}"
+# Путь для вебхука. Заменяем динамический путь на более простой статический,
+# чтобы упростить настройку реверс-прокси (например, Nginx).
+# ВАЖНО: Убедитесь, что ваш реверс-прокси (Nginx/Caddy/etc.) настроен на перенаправление запросов с этого пути на порт вашего бота.
+WEBHOOK_PATH = "/webhook" # Для большей безопасности можно использовать f"/{WEBHOOK_SECRET}"
 # Убираем возможный слэш в конце WEBHOOK_HOST, чтобы избежать двойных слэшей // в итоговом URL.
 BASE_WEBHOOK_URL = f"{WEBHOOK_HOST.rstrip('/')}{WEBHOOK_PATH}"
 

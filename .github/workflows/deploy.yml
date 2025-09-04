@@ -128,9 +128,16 @@ jobs:
             # Устанавливаем политику перезапуска для продакшена.
             sed -i -E 's/^\s*restart:.*/    restart: unless-stopped/' docker-compose.yml
 
-            echo "3. Ensuring healthcheck is enabled"
+            echo "3. Ensuring healthcheck is enabled and adjusting interval"
             # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
             sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
+            # Увеличиваем интервал проверки до 5 минут, чтобы уменьшить количество логов.
+            # Если строка 'interval:' уже есть, заменяем ее. Если нет - добавляем после строки 'test:'.
+            if grep -q '^\s*interval:' docker-compose.yml; then
+              sed -i -E 's/^\s*interval:.*/      interval: 5m/' docker-compose.yml
+            else
+              sed -i -E '/^\s*test:.*/a \      interval: 5m' docker-compose.yml
+            fi
 
             echo "4. Ensuring production memory limits"
             # Возвращаем стандартные лимиты памяти для продакшена.
