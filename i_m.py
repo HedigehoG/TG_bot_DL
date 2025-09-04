@@ -1175,11 +1175,14 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	proxy_type = config.get("proxy")
 	if proxy_type:
 		proxy_url = get_proxy(proxy_type)
-		if proxy_url:
-			connector = ProxyConnector.from_url(proxy_url)
-			session_args["connector"] = connector
-		else:
-			logging.warning(f"Прокси '{proxy_type}' для сайта {config['name']} недоступен. Запрос будет выполнен без прокси.")
+		if not proxy_url:
+			# Если для сайта требуется прокси, но он недоступен, немедленно прекращаем работу.
+			# Это предотвращает утечку реального IP и бесполезные запросы к заблокированным ресурсам.
+			logging.error(f"Требуемый прокси '{proxy_type}' для сайта {config['name']} недоступен. Пропускаем этот источник.")
+			return None
+		
+		connector = ProxyConnector.from_url(proxy_url)
+		session_args["connector"] = connector
 
 	try:
 		async with aiohttp.ClientSession(**session_args) as session:
