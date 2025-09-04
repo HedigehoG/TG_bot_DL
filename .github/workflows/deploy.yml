@@ -132,6 +132,11 @@ jobs:
             # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
             sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
 
+            echo "4. Ensuring production memory limits"
+            # Возвращаем стандартные лимиты памяти для продакшена.
+            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 150m/' docker-compose.yml
+            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 300m/' docker-compose.yml
+
             # Определяем, какой образ разворачивать.
             IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
             export BOT_IMAGE=$(echo "$IMAGE_TAGS" | head -n 1)
@@ -244,7 +249,13 @@ jobs:
             # Это предотвратит остановку контейнера, пока он ожидает подключения отладчика.
             sed -i -E 's/^\s*test:.*/      test: ["CMD", "true"]/' docker-compose.yml
 
-            echo "5. Restarting container with new settings"
+            echo "5. Increasing memory limit for debugging"
+            # Увеличиваем лимит памяти, т.к. debugpy добавляет накладные расходы,
+            # и OOM killer может остановить контейнер.
+            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 512m/' docker-compose.yml
+            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 1024m/' docker-compose.yml
+
+            echo "6. Restarting container with new settings"
             docker compose up -d --force-recreate --remove-orphans
 
             echo "--- Debug mode enabled. Waiting for container... ---"

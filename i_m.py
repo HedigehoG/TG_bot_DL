@@ -58,7 +58,9 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
-TG_IDS = os.getenv("TG_IDS").split(",")  # Список ID администраторов
+TG_IDS_RAW = os.getenv("TG_IDS")
+if not TG_IDS_RAW: exit("TG_IDS is not set")
+TG_IDS = TG_IDS_RAW.split(",")  # Список ID администраторов
 # --- Настройка Telegram Bot ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN: exit("BOT_TOKEN is not set")
