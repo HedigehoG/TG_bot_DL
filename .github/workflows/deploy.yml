@@ -138,8 +138,11 @@ jobs:
             sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 300m/' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
-            IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
-            export BOT_IMAGE=$(echo "$IMAGE_TAGS" | head -n 1)
+            # При deploy_only используется github.repository, который может содержать заглавные буквы.
+            # Имя репозитория в Docker/GHCR должно быть в нижнем регистре, поэтому приводим его.
+            IMAGE_TAGS_RAW="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
+            # Берем первую строку (на случай если тегов несколько) и приводим к нижнему регистру.
+            export BOT_IMAGE=$(echo "$IMAGE_TAGS_RAW" | head -n 1 | tr '[:upper:]' '[:lower:]')
             
             echo "--- Deploying image: ${BOT_IMAGE}"
 
