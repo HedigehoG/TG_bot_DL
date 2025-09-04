@@ -74,8 +74,9 @@ MODEL_25 = "gemini-2.5-flash"
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 # Путь для вебхука. Использование токена в пути — простая мера безопасности.
-WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
-BASE_WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+WEBHOOK_PATH = f"/bot{BOT_TOKEN}"
+# Убираем возможный слэш в конце WEBHOOK_HOST, чтобы избежать двойных слэшей // в итоговом URL.
+BASE_WEBHOOK_URL = f"{WEBHOOK_HOST.rstrip('/')}{WEBHOOK_PATH}"
 
 # --- Web server settings ---
 # Адрес и порт, который будет слушать веб-сервер внутри контейнера.
