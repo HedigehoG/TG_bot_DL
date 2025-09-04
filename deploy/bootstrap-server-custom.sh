@@ -277,44 +277,25 @@ setup_cleanup_script() {
   echo "Скрипт очистки настроен и размещен в ${cleanup_script_dest_path}."
 }
 
-create_env_file() {
-  local env_file="${WORK_DIR}/.env"
+create_server_env_file() {
+  local env_file="${WORK_DIR}/.env.server"
   if [ -f "${env_file}" ]; then
-    echo ".env файл уже существует. Пропускаем создание."
+    echo ".env.server файл уже существует. Пропускаем создание."
     return
   fi
 
-  echo "Создание .env файла в ${WORK_DIR}"
-
-  # Генерируем безопасный секретный токен для вебхука, который соответствует требованиям Telegram
-  # (A-Z, a-z, 0-9, _ and -). Мы используем base64 и удаляем неразрешенные символы.
-  # Это решает проблему "secret token contains unallowed characters".
-  local webhook_secret=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9')
+  echo "Создание файла с конфигурацией сервера (.env.server) в ${WORK_DIR}"
 
   cat > "${env_file}" <<ENV
-# Этот файл содержит переменные окружения для вашего бота.
-
-# Имя бота, используется для docker-compose (например, для имени контейнера).
+# Этот файл содержит не-секретные переменные, специфичные для сервера.
+# Он создается один раз при настройке и НЕ перезаписывается во время деплоя.
+# Секретные переменные хранятся в файле .env, который генерируется из GitHub Secrets.
 BOT_NAME=${BOT_NAME}
-
-# Публичный URL, на который Telegram будет отправлять обновления.
-WEBHOOK_HOST=${WEBHOOK_HOST_URL}
-
-# Секретный токен для верификации запросов от Telegram (заголовок X-Telegram-Bot-Api-Secret-Token).
-# Кавычки вокруг значения — хорошая практика для .env файлов.
-WEBHOOK_SECRET="${webhook_secret}"
-
-# Порт на хост-машине, который будет пробрасываться в контейнер.
 BOT_PORT=${HOST_PORT}
-
-# Внутренний порт, на котором приложение слушает внутри контейнера.
-# Это значение должно совпадать с переменной CONTAINER_PORT в docker-compose.yml.
 LISTEN_PORT=${CONTAINER_PORT}
-
-# BOT_TOKEN будет автоматически добавлен в конец этого файла во время деплоя из GitHub Secrets.
 ENV
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${env_file}"
-  echo ".env файл создан."
+  echo ".env.server файл создан."
 }
 
 create_docker_compose_file() {
@@ -341,7 +322,8 @@ services:
     # Здесь мы указываем значение по умолчанию для локальных запусков.
     image: \${BOT_IMAGE:-${bot_image}}
     env_file:
-      - .env
+      - .env.server # Статичная конфигурация сервера
+      - .env        # Секреты, управляемые через CI/CD
     ports:
       # Проброс порта с хоста (переменная из .env) в контейнер (константа).
       - "\${BOT_PORT}:${CONTAINER_PORT}"
@@ -409,16 +391,20 @@ display_github_secrets() {
     return
   fi
 
-  local ssh_host
-  ssh_host=$(_get_server_public_ip)
+  local ssh_host=$(_get_server_public_ip)
+  # Генерируем секрет для вебхука прямо здесь, так как он нужен только для вывода.
+  local webhook_secret_generated
+  webhook_secret_generated=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9_-')
 
   echo
   echo "====================== Секреты для GitHub Actions ======================"
   echo "Добавьте следующие секреты в настройки вашего репозитория на GitHub:"
   echo "--------------------------------------------------------------------"
-  echo "SSH_HOST: ${ssh_host}"
-  echo "SSH_USER: ${DEPLOY_USER}"
-  echo "CLEANUP_COMMAND: ${CLEANUP_COMMAND_VAR}"
+  echo "SSH_HOST:             ${ssh_host}"
+  echo "SSH_USER:             ${DEPLOY_USER}"
+  echo "WEBHOOK_HOST:         ${WEBHOOK_HOST_URL}"
+  echo "WEBHOOK_SECRET:       ${webhook_secret_generated}"
+  echo "CLEANUP_COMMAND:      ${CLEANUP_COMMAND_VAR}"
 
   echo "---------------------- SSH_PRIVATE_KEY (КРИТИЧЕСКИ ВАЖНО!) ------------------"
   echo "Скопируйте всё, что находится между линиями ==, включая 'BEGIN' и 'END'."
@@ -440,12 +426,14 @@ print_summary() {
   echo "--- Следующие шаги ---"
   echo "1. Перейдите в настройки вашего репозитория на GitHub и добавьте секреты:"
   echo "   (Settings -> Secrets and variables -> Actions -> New repository secret)"
-  echo "   - Добавьте все секреты, показанные выше (\`SSH_HOST\`, \`SSH_USER\`, \`CLEANUP_COMMAND\`, \`SSH_PRIVATE_KEY\`)."
-  echo "   - Добавьте еще один, самый важный секрет: \`BOT_TOKEN\` (токен от @BotFather)."
+  echo "   - Добавьте все секреты, показанные выше (SSH_HOST, SSH_USER, WEBHOOK_HOST, WEBHOOK_SECRET и т.д.)."
+  echo "   - Добавьте самый важный секрет: \`BOT_TOKEN\` (токен от @BotFather)."
+  echo "   - Создайте мультистрочный секрет \`OTHER\` и добавьте в него остальные переменные,"
+  echo "     такие как GOOGLE_API_KEY, TG_IDS и другие (см. новый файл .env.example)."
 
   display_caddy_config
 
-  echo "2. Проверьте и при необходимости отредактируйте файл ${WORK_DIR}/.env на сервере."
+  echo "2. Проверьте и при необходимости отредактируйте файл ${WORK_DIR}/.env.server на сервере."
   echo "3. Отправьте изменения в ветку 'main' (или другую основную ветку), чтобы запустить деплой."
 }
 
@@ -465,7 +453,7 @@ main() {
   install_docker
   setup_deploy_user
   setup_cleanup_script
-  create_env_file
+  create_server_env_file
   create_docker_compose_file
   print_summary
 }

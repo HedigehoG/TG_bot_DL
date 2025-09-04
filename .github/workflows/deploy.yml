@@ -109,28 +109,23 @@ jobs:
             cd /home/${{ secrets.SSH_USER }}
             
             echo "--- Ensuring production mode (disabling debug) ---"
-            
-            echo "1. Removing DEBUG_MODE from .env file"
-            # Удаляем строку, если она существует. Игнорируем ошибку, если ее нет.
-            grep -v '^DEBUG_MODE=' .env > .env.tmp && mv .env.tmp .env
 
-            echo "2. Commenting out debug port in docker-compose.yml"
+            echo "1. Commenting out debug port in docker-compose.yml"
             # Комментируем строку, если она еще не закомментирована.
             # Этот sed ищет строку, начинающуюся с пробелов и "- "5678:5678"", и добавляет "# " после пробелов.
             sed -i -E 's/^(\s*)(\- "5678:5678")/\1# \2/' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
-            # Для 'deploy_only' берем 'latest', для остальных - конкретный тег сборки.
-            # Примечание: для 'deploy_only' можно добавить input для указания конкретного тега.
             IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
-            # Берем первый тег из списка (это будет хеш коммита, если он есть, или latest)
             export BOT_IMAGE=$(echo "$IMAGE_TAGS" | head -n 1)
             
             echo "--- Deploying image: ${BOT_IMAGE}"
 
-            echo "--- Updating .env file with BOT_TOKEN"
-            # Надежно обновляем или добавляем BOT_TOKEN
-            grep -qF 'BOT_TOKEN=' .env && sed -i 's|BOT_TOKEN=.*|BOT_TOKEN=${{ secrets.BOT_TOKEN }}|' .env || echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" >> .env
+            echo "--- Creating .env file from secrets ---"
+            echo "BOT_TOKEN=${{ secrets.BOT_TOKEN }}" > .env
+            if [ -n "${{ secrets.OTHER }}" ]; then
+              printf '\n%s' "${{ secrets.OTHER }}" >> .env
+            fi
 
             echo "--- Pulling new image"
             docker compose pull

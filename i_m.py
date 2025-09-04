@@ -58,8 +58,8 @@ logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=lo
 load_dotenv()
 TG_IDS = os.getenv("TG_IDS").split(",")  # Список ID администраторов
 # --- Настройка Telegram Bot ---
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-if not TELEGRAM_TOKEN: exit("TELEGRAM_TOKEN is not set")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN: exit("BOT_TOKEN is not set")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY: exit("GOOGLE_API_KEY is not set")
 client = genai.Client() # the API is automatically loaded from the environement variable
@@ -70,7 +70,7 @@ MODEL_25 = "gemini-2.5-flash"
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
 # Путь для вебхука. Использование токена в пути — простая мера безопасности.
-WEBHOOK_PATH = f"/bot/{TELEGRAM_TOKEN}"
+WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
 BASE_WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 # --- Web server settings ---
@@ -117,7 +117,7 @@ if os.getenv("DEBUG_MODE") == "1":
         logging.error(f"Не удалось запустить debugpy: {e}")
 
 # --- Bot и Dispatcher ---
-bot = Bot(token=TELEGRAM_TOKEN) #,session=my_custom_session
+bot = Bot(token=BOT_TOKEN) #,session=my_custom_session
 dp = Dispatcher()
 
 # --- Глобальный кэш для клиентов Instagrapi ---
