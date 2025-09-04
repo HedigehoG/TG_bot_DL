@@ -130,7 +130,7 @@ jobs:
 
             echo "3. Ensuring healthcheck is enabled"
             # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
-            sed -i -E 's@^\s*test:.*@    test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
+            sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
             IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
@@ -242,7 +242,7 @@ jobs:
             echo "4. Disabling healthcheck for debugging"
             # Заменяем реальную проверку на команду, которая всегда успешна.
             # Это предотвратит остановку контейнера, пока он ожидает подключения отладчика.
-            sed -i -E 's/^\s*test:.*/    test: ["CMD", "true"]/' docker-compose.yml
+            sed -i -E 's/^\s*test:.*/      test: ["CMD", "true"]/' docker-compose.yml
 
             echo "5. Restarting container with new settings"
             docker compose up -d --force-recreate --remove-orphans
