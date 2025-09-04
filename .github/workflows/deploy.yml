@@ -129,8 +129,8 @@ jobs:
             sed -i -E 's/^\s*restart:.*/    restart: unless-stopped/' docker-compose.yml
 
             echo "3. Ensuring healthcheck is enabled"
-            # Восстанавливаем команду healthcheck для продакшена. Используем ',' как разделитель для sed.
-            sed -i -E 's,^\s*test:.*,    test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT}/health"],' docker-compose.yml
+            # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
+            sed -i -E 's@^\s*test:.*@    test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
             IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
