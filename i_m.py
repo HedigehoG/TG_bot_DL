@@ -188,7 +188,18 @@ The user's message will be provided as the main content to process. Analyze it a
 				system_instruction=prompt,
 			),
 		)
+		# Проверяем, что ответ не пустой и не был заблокирован.
+		# Это предотвращает ошибку 'Expecting value: line 1 column 1 (char 0)'.
+		if not response.text:
+			logging.error(f"Ошибка классификации AI Gemini: Модель вернула пустой ответ. Feedback: {response.prompt_feedback}")
+			return {"type": "chat", "content": text}
+
 		return json.loads(response.text)
+	except json.JSONDecodeError as e:
+		# Эта ошибка возникает, если ответ модели — не пустой, но невалидный JSON.
+		# Логируем сам ответ, чтобы понять, что пошло не так.
+		logging.error(f"Ошибка декодирования JSON от Gemini: {e}. Ответ модели: '{response.text}'")
+		return {"type": "chat", "content": text}
 	except Exception as e:
 		logging.error(f"Ошибка классификации AI Gemini: {e}")
 		return {"type": "chat", "content": text}
