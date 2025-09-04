@@ -1,52 +1,37 @@
 #!/bin/sh
-set -e # Выходить немедленно, если команда завершается с ошибкой.
 
-# Скрипт-обертка для ожидания доступности сети перед запуском основного приложения.
-# Шаг 1: Ожидает, пока контейнер сможет разрешать внешние DNS-имена (проверка внутренней сети).
-# Шаг 2: Ожидает, пока DNS-запись самого бота станет видна (проверка внешней DNS-пропагации).
+# set -e: Exit immediately if a command exits with a non-zero status.
+# This is a good practice for scripts to avoid unexpected behavior.
+set -e
 
-WAIT_TIMEOUT=100 # 100 секунд - максимальное время ожидания.
-
-wait_for_dns() {
-    local target_host="$1"
-    echo "Entrypoint: Waiting for DNS resolution for '${target_host}'..."
-    local start_time=$(date +%s)
-
-    # Используем `getent hosts` вместо `host`. `getent` использует стандартные
-    # системные библиотеки для разрешения имен (NSS), так же, как и большинство
-    # приложений. Это более надежный способ, чем `host` или `dig`.
-    while ! getent hosts "${target_host}" > /dev/null 2>&1; do
-        local current_time=$(date +%s)
-        local elapsed_time=$((current_time - start_time))
-
-        if [ ${elapsed_time} -ge ${WAIT_TIMEOUT} ]; then
-            echo "Entrypoint: Timeout! Host '${target_host}' not resolvable after ${WAIT_TIMEOUT} seconds."
-            echo "Entrypoint: Please check container's network and DNS settings."
-            # Выводим содержимое /etc/resolv.conf для упрощения отладки.
-            # Это покажет, какие DNS-серверы использует контейнер.
-            echo "--- Contents of /etc/resolv.conf ---"
-            cat /etc/resolv.conf || echo "Could not read /etc/resolv.conf"
-            echo "------------------------------------"
-            exit 1
-        fi
-
-        echo "Entrypoint: Host '${target_host}' not yet resolvable, retrying in 5 seconds..."
-        sleep 5
-    done
-    echo "Entrypoint: Host '${target_host}' is resolvable."
+# Функция для проверки доступности хоста через DNS
+wait_for_host() {
+  host_to_check=$1
+  echo "Entrypoint: Waiting for DNS resolution for '$host_to_check'..."
+  # Пытаемся разрешить хост в цикле с задержкой. Утилита 'host' установлена в Dockerfile.
+  until host "$host_to_check" > /dev/null 2>&1; do
+    echo "Entrypoint: Host '$host_to_check' is not yet resolvable, retrying in 2 seconds..."
+    sleep 2
+  done
+  echo "Entrypoint: Host '$host_to_check' is resolvable."
 }
 
-# Шаг 1: Проверка базовой сетевой связности
-wait_for_dns "api.telegram.org"
+# Загружаем переменные из .env.server, чтобы получить WEBHOOK_HOST
+if [ -f .env.server ]; then
+  # Используем 'grep' и 'cut' вместо 'source', чтобы избежать выполнения команд из .env файла
+  WEBHOOK_HOST_URL=$(grep '^WEBHOOK_HOST=' .env.server | cut -d'=' -f2-)
+fi
 
-# Шаг 2: Ожидание распространения DNS-записи нашего вебхука
-# WEBHOOK_HOST берется из .env файла, например: https://my-bot.example.com
-if [ -n "${WEBHOOK_HOST}" ]; then
-    webhook_hostname=$(echo "${WEBHOOK_HOST}" | sed -e 's|^https\?://||' -e 's|/.*$||' -e 's|:.*$||')
-    wait_for_dns "${webhook_hostname}"
+# Проверяем ключевые хосты, которые необходимы для работы бота
+wait_for_host "api.telegram.org"
+if [ -n "$WEBHOOK_HOST_URL" ]; then
+  # Извлекаем только имя хоста из URL (убираем протокол и путь)
+  WEBHOOK_HOSTNAME=$(echo "$WEBHOOK_HOST_URL" | sed -e 's|^https\?://||' -e 's|/.*$||')
+  wait_for_host "$WEBHOOK_HOSTNAME"
 fi
 
 echo "Entrypoint: All checks passed. Starting application..."
-# `exec "$@"` заменяет текущий процесс (скрипт) на команду, переданную в аргументах (CMD из Dockerfile).
-# Это позволяет приложению (python bot.py) корректно получать сигналы от Docker.
+
+# Заменяем текущий процесс (скрипт) на команду, переданную в CMD Dockerfile (python i_m.py).
+# Это КЛЮЧЕВОЙ момент. Без 'exec' скрипт завершится, и контейнер остановится вместе с ним.
 exec "$@"
