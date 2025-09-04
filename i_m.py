@@ -89,7 +89,7 @@ r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 # --- insta dev ---
 IG_DEVICE_CONFIG = {
 	"my_config": {
-        # Новые параметры от Samsung Galaxy S23 Ultra для имитации другого устройства
+		# Новые параметры от Samsung Galaxy S23 Ultra для имитации другого устройства
 		"user_agent": "Instagram 360.0.0.30.109 Android (33/13; 640dpi; 1440x3088; samsung; SM-S918B; d2s; qcom; en_US; 674228472)",
 		"device": {
 			"app_version": "360.0.0.30.109",
@@ -112,11 +112,12 @@ IG_DEVICE_CONFIG = {
 # 2. Добавьте проброс порта 5678 в docker-compose.yml.
 # 3. Пересоздайте контейнер: docker-compose up -d --force-recreate
 if os.getenv("DEBUG_MODE") == "1":
-    try:
-        logging.info("🚀 РЕЖИМ ОТЛАДКИ АКТИВИРОВАН. Ожидание подключения отладчика на порту 5678...")
-        debugpy.listen(("0.0.0.0", 5678))
-    except Exception as e:
-        logging.error(f"Не удалось запустить debugpy: {e}")
+	try:
+		logging.info("🚀 РЕЖИМ ОТЛАДКИ АКТИВИРОВАН. Ожидание подключения отладчика на порту 5678...")
+		debugpy.listen(("0.0.0.0", 5678))
+		debugpy.wait_for_client()
+	except Exception as e:
+		logging.error(f"Не удалось запустить debugpy: {e}")
 
 # --- Bot и Dispatcher ---
 bot = Bot(token=BOT_TOKEN) #,session=my_custom_session
@@ -140,35 +141,35 @@ The possible values for "type" are: "song", "instagram_link", "yandex_music_link
 Follow these rules for classification:
 
 1.  **Type: "song"**
-    *   If the message appears to be a song title and/or artist name (even with typos or incomplete).
-    *   The "content" should be a JSON object: {{"song": "Corrected Artist - Corrected Title", "duration": DURATION_IN_SECONDS}}.
-    *   Use your knowledge and the provided search tool to find the correct artist, title, and duration in seconds.
-    *   If duration is unknown, use 0.
-    *   Example: for "Заточка - мкжик", you should return a "song" type with content like {{"song": "Заточка - Последний нормальный мужик", "duration": 266}}.
+	*   If the message appears to be a song title and/or artist name (even with typos or incomplete).
+	*   The "content" should be a JSON object: {{"song": "Corrected Artist - Corrected Title", "duration": DURATION_IN_SECONDS}}.
+	*   Use your knowledge and the provided search tool to find the correct artist, title, and duration in seconds.
+	*   If duration is unknown, use 0.
+	*   Example: for "Заточка - мкжик", you should return a "song" type with content like {{"song": "Заточка - Последний нормальный мужик", "duration": 266}}.
 
 2.  **Type: "instagram_link"**
-    *   If the message is a valid Instagram post link (e.g., `https://www.instagram.com/p/ABC123/`).
-    *   The "content" should be a JSON object: {{"shortcode": "SHORTCODE"}}.
-    *   Example: for `https://www.instagram.com/p/Cxyz123/`, the shortcode is `Cxyz123`.
+	*   If the message is a valid Instagram post link (e.g., `https://www.instagram.com/p/ABC123/`).
+	*   The "content" should be a JSON object: {{"shortcode": "SHORTCODE"}}.
+	*   Example: for `https://www.instagram.com/p/Cxyz123/`, the shortcode is `Cxyz123`.
 
 3.  **Type: "yandex_music_link"**
-    *   If the message is a Yandex Music track link (e.g., `https://music.yandex.com/album/123/track/456`).
-    *   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-    *   Example: for the link above, the track_id is `456`.
+	*   If the message is a Yandex Music track link (e.g., `https://music.yandex.com/album/123/track/456`).
+	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
+	*   Example: for the link above, the track_id is `456`.
 
 4.  **Type: "sberzvuk_link"**
-    *   If the message is a SberZvuk (zvuk.com) track link (e.g., `https://zvuk.com/track/123`).
-    *   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-    *   Example: for the link above, the track_id is `123`.
+	*   If the message is a SberZvuk (zvuk.com) track link (e.g., `https://zvuk.com/track/123`).
+	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
+	*   Example: for the link above, the track_id is `123`.
 
 5.  **Type: "mts_music_link"**
-    *   If the message is an MTS Music track link (e.g., `https://music.mts.ru/track/789`).
-    *   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-    *   Example: for the link above, the track_id is `789`.
+	*   If the message is an MTS Music track link (e.g., `https://music.mts.ru/track/789`).
+	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
+	*   Example: for the link above, the track_id is `789`.
 
 6.  **Type: "chat"**
-    *   If the message does not match any of the types above, classify it as "chat".
-    *   The "content" should be the original user message as a string.
+	*   If the message does not match any of the types above, classify it as "chat".
+	*   The "content" should be the original user message as a string.
 
 The user's message will be provided as the main content to process. Analyze it and return only the JSON object.
 '''
@@ -246,14 +247,14 @@ def check_tor_connection(control_port=9051, cookie_path="/run/tor/control.authco
 INSTAGRAM_PROXY = os.getenv("INSTAGRAM_PROXY")
 
 def get_proxy(args=None):
-    proxies = {
-        "instagram": lambda: INSTAGRAM_PROXY,
-        "tor": lambda: "socks5://127.0.0.1:9050" if check_tor_connection() else None,
-        "freeproxy": lambda: None
-    }
-    proxy = proxies.get(args, lambda: None)()
-    logging.info(f"Используется прокси: {proxy}")
-    return proxy
+	proxies = {
+		"instagram": lambda: INSTAGRAM_PROXY,
+		"tor": lambda: "socks5://127.0.0.1:9050" if check_tor_connection() else None,
+		"freeproxy": lambda: None
+	}
+	proxy = proxies.get(args, lambda: None)()
+	logging.info(f"Используется прокси: {proxy}")
+	return proxy
 
 
 # --- Командные обработчики ---
@@ -283,65 +284,65 @@ MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024 # 50 MB
 
 # --- Функция для получения клиента Instagram ---
 def get_instagram_client(user_id: str, session_data: dict | None = None, username: str | None = None, password: str | None = None) -> Client | None:
-    # --- Попытка 0: Получить клиент из кэша в памяти (потокобезопасно) ---
-    cached_client = None
-    with INSTA_CLIENTS_LOCK:
-        cached_client = INSTA_CLIENTS_CACHE.get(user_id)
+	# --- Попытка 0: Получить клиент из кэша в памяти (потокобезопасно) ---
+	cached_client = None
+	with INSTA_CLIENTS_LOCK:
+		cached_client = INSTA_CLIENTS_CACHE.get(user_id)
 
-    if cached_client:
-        try:
-            # Быстрая проверка, жива ли сессия (ВНЕ блокировки, чтобы не тормозить другие потоки)
-            cached_client.get_timeline_feed()
-            logging.info(f"✅ Используется кэшированный клиент instagrapi для user {user_id}")
-            return cached_client
-        except (LoginRequired, ChallengeRequired, ClientError) as e:
-            logging.warning(f"⚠️ Кэшированный клиент для user {user_id} недействителен: {e}. Удаляем из кэша.")
-            # Удаляем недействительный клиент под блокировкой во избежание гонки состояний
-            with INSTA_CLIENTS_LOCK:
-                # Проверяем, что клиент в кэше все еще тот самый, который мы проверяли
-                if INSTA_CLIENTS_CACHE.get(user_id) == cached_client:
-                    del INSTA_CLIENTS_CACHE[user_id]
+	if cached_client:
+		try:
+			# Быстрая проверка, жива ли сессия (ВНЕ блокировки, чтобы не тормозить другие потоки)
+			cached_client.get_timeline_feed()
+			logging.info(f"✅ Используется кэшированный клиент instagrapi для user {user_id}")
+			return cached_client
+		except (LoginRequired, ChallengeRequired, ClientError) as e:
+			logging.warning(f"⚠️ Кэшированный клиент для user {user_id} недействителен: {e}. Удаляем из кэша.")
+			# Удаляем недействительный клиент под блокировкой во избежание гонки состояний
+			with INSTA_CLIENTS_LOCK:
+				# Проверяем, что клиент в кэше все еще тот самый, который мы проверяли
+				if INSTA_CLIENTS_CACHE.get(user_id) == cached_client:
+					del INSTA_CLIENTS_CACHE[user_id]
 
-    # --- Если в кэше нет или он недействителен, создаем новый ---
-    new_client = None
+	# --- Если в кэше нет или он недействителен, создаем новый ---
+	new_client = None
 
-    # Попытка 1: Восстановить сессию из Redis
-    if session_data:
-        cl = Client()
-        cl.delay_range = [1, 4]
-        proxy = get_proxy("instagram")
-        if proxy: cl.set_proxy(proxy)
-        try:
-            cl.set_settings(session_data)
-            cl.get_timeline_feed()
-            logging.info(f"✅ Вход по сессии для user {user_id} прошёл успешно")
-            new_client = cl
-        except Exception as e:
-            logging.warning(f"⚠️ Не удалось восстановить сессию для user {user_id}: {e}. Пробуем войти по паролю.")
+	# Попытка 1: Восстановить сессию из Redis
+	if session_data:
+		cl = Client()
+		cl.delay_range = [1, 4]
+		proxy = get_proxy("instagram")
+		if proxy: cl.set_proxy(proxy)
+		try:
+			cl.set_settings(session_data)
+			cl.get_timeline_feed()
+			logging.info(f"✅ Вход по сессии для user {user_id} прошёл успешно")
+			new_client = cl
+		except Exception as e:
+			logging.warning(f"⚠️ Не удалось восстановить сессию для user {user_id}: {e}. Пробуем войти по паролю.")
 
-    # Попытка 2: Войти по логину и паролю (если восстановление по сессии не удалось)
-    if not new_client and username and password:
-        cl = Client()
-        cl.delay_range = [1, 6]
-        proxy = get_proxy("instagram")
-        if proxy: cl.set_proxy(proxy)
-        try:
-            cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
-            cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
-            cl.login(username, password)
-            logging.info(f"✅ Успешный вход по логину/паролю для user {user_id}")
-            new_client = cl
-        except (ChallengeRequired, BadPassword) as e:
-            logging.warning(f"❗ Ошибка входа для user {user_id}: {e}")
-        except Exception as e:
-            logging.error(f"❌ Неизвестная ошибка логина для user {user_id}: {e}")
+	# Попытка 2: Войти по логину и паролю (если восстановление по сессии не удалось)
+	if not new_client and username and password:
+		cl = Client()
+		cl.delay_range = [1, 6]
+		proxy = get_proxy("instagram")
+		if proxy: cl.set_proxy(proxy)
+		try:
+			cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
+			cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
+			cl.login(username, password)
+			logging.info(f"✅ Успешный вход по логину/паролю для user {user_id}")
+			new_client = cl
+		except (ChallengeRequired, BadPassword) as e:
+			logging.warning(f"❗ Ошибка входа для user {user_id}: {e}")
+		except Exception as e:
+			logging.error(f"❌ Неизвестная ошибка логина для user {user_id}: {e}")
 
-    # Сохраняем новый успешный клиент в кэш
-    if new_client:
-        with INSTA_CLIENTS_LOCK:
-            INSTA_CLIENTS_CACHE[user_id] = new_client
+	# Сохраняем новый успешный клиент в кэш
+	if new_client:
+		with INSTA_CLIENTS_LOCK:
+			INSTA_CLIENTS_CACHE[user_id] = new_client
 
-    return new_client
+	return new_client
 
 # Вспомогательная функция для получения информации о медиа
 def get_media_info_private(client: Client, code: str) -> dict:

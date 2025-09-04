@@ -124,6 +124,10 @@ jobs:
             # Этот sed ищет строку, начинающуюся с пробелов и "- "5678:5678"", и добавляет "# " после пробелов.
             sed -i -E 's/^(\s*)(\- "5678:5678")/\1# \2/' docker-compose.yml
 
+            echo "2. Ensuring restart policy is 'unless-stopped'"
+            # Устанавливаем политику перезапуска для продакшена.
+            sed -i -E 's/^\s*restart:.*/    restart: unless-stopped/' docker-compose.yml
+
             # Определяем, какой образ разворачивать.
             IMAGE_TAGS="${{ needs.build.outputs.image_tags || format('ghcr.io/{0}:latest', github.repository) }}"
             export BOT_IMAGE=$(echo "$IMAGE_TAGS" | head -n 1)
@@ -226,8 +230,12 @@ jobs:
             # Раскомментируем строку, если она закомментирована.
             # Этот sed ищет строку, начинающуюся с пробелов, #, еще пробелов и "- "5678:5678"", и заменяет ее на ту же строку без #.
             sed -i -E 's/^(\s*)#\s*(- "5678:5678")/\1\2/' docker-compose.yml
+            
+            echo "3. Setting restart policy to 'no' for debugging"
+            # Отключаем автоматический перезапуск, чтобы можно было изучить логи в случае сбоя.
+            sed -i -E 's/^\s*restart:.*/    restart: "no"/' docker-compose.yml
 
-            echo "3. Restarting container with new settings"
+            echo "4. Restarting container with new settings"
             docker compose up -d --force-recreate --remove-orphans
 
             echo "--- Debug mode enabled. Waiting for container... ---"
