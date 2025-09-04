@@ -107,6 +107,15 @@ jobs:
           script: |
             set -euo pipefail
             cd /home/${{ secrets.SSH_USER }}
+
+            # Загружаем переменные из .env.server в окружение сессии.
+            # Это необходимо, чтобы docker-compose мог использовать их для подстановки
+            # в docker-compose.yml (например, ${BOT_NAME}, ${BOT_PORT}).
+            if [ -f .env.server ]; then
+              set -o allexport
+              source .env.server
+              set +o allexport
+            fi
             
             echo "--- Ensuring production mode (disabling debug) ---"
 
@@ -166,6 +175,14 @@ jobs:
           script: |
             set -euo pipefail
             cd /home/${{ secrets.SSH_USER }}
+
+            # Загружаем переменные из .env.server для корректной работы docker-compose
+            if [ -f .env.server ]; then
+              set -o allexport
+              source .env.server
+              set +o allexport
+            fi
+
             echo "--- Stopping bot..."
             docker compose down
             echo "--- Bot stopped."
@@ -190,6 +207,13 @@ jobs:
           script: |
             set -euo pipefail
             cd /home/${{ secrets.SSH_USER }}
+
+            # Загружаем переменные из .env.server для корректной работы docker-compose
+            if [ -f .env.server ]; then
+              set -o allexport
+              source .env.server
+              set +o allexport
+            fi
             
             echo "--- Enabling debug mode ---"
 

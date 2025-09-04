@@ -284,7 +284,11 @@ create_server_env_file() {
     return
   fi
 
-  echo "Создание файла с конфигурацией сервера (.env.server) в ${WORK_DIR}"
+  echo "Создание файла с конфигурацией сервера (.env.server) в ${WORK_DIR}..."
+
+  # Генерируем секретный токен для вебхука, который будет храниться только на сервере.
+  local webhook_secret_generated
+  webhook_secret_generated=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9_-')
 
   cat > "${env_file}" <<ENV
 # Этот файл содержит не-секретные переменные, специфичные для сервера.
@@ -293,6 +297,10 @@ create_server_env_file() {
 BOT_NAME=${BOT_NAME}
 BOT_PORT=${HOST_PORT}
 LISTEN_PORT=${CONTAINER_PORT}
+
+# --- Webhook (управляется этим скриптом) ---
+WEBHOOK_HOST=${WEBHOOK_HOST_URL}
+WEBHOOK_SECRET=${webhook_secret_generated}
 ENV
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${env_file}"
   echo ".env.server файл создан."
@@ -392,9 +400,6 @@ display_github_secrets() {
   fi
 
   local ssh_host=$(_get_server_public_ip)
-  # Генерируем секрет для вебхука прямо здесь, так как он нужен только для вывода.
-  local webhook_secret_generated
-  webhook_secret_generated=$(head -c 32 /dev/urandom | base64 | tr -dc 'a-zA-Z0-9_-')
 
   echo
   echo "====================== Секреты для GitHub Actions ======================"
@@ -402,8 +407,6 @@ display_github_secrets() {
   echo "--------------------------------------------------------------------"
   echo "SSH_HOST:             ${ssh_host}"
   echo "SSH_USER:             ${DEPLOY_USER}"
-  echo "WEBHOOK_HOST:         ${WEBHOOK_HOST_URL}"
-  echo "WEBHOOK_SECRET:       ${webhook_secret_generated}"
   echo "CLEANUP_COMMAND:      ${CLEANUP_COMMAND_VAR}"
 
   echo "---------------------- SSH_PRIVATE_KEY (КРИТИЧЕСКИ ВАЖНО!) ------------------"
@@ -426,7 +429,7 @@ print_summary() {
   echo "--- Следующие шаги ---"
   echo "1. Перейдите в настройки вашего репозитория на GitHub и добавьте секреты:"
   echo "   (Settings -> Secrets and variables -> Actions -> New repository secret)"
-  echo "   - Добавьте все секреты, показанные выше (SSH_HOST, SSH_USER, WEBHOOK_HOST, WEBHOOK_SECRET и т.д.)."
+  echo "   - Добавьте все секреты, показанные выше (SSH_HOST, SSH_USER, CLEANUP_COMMAND и SSH_PRIVATE_KEY)."
   echo "   - Добавьте самый важный секрет: \`BOT_TOKEN\` (токен от @BotFather)."
   echo "   - Создайте мультистрочный секрет \`OTHER\` и добавьте в него остальные переменные,"
   echo "     такие как GOOGLE_API_KEY, TG_IDS и другие (см. новый файл .env.example)."
