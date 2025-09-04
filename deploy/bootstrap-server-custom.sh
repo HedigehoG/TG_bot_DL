@@ -208,8 +208,16 @@ install_docker() {
 }
 
 setup_deploy_user() {
+  # Определяем пути заранее, чтобы они были доступны в любом случае
+  local ssh_dir="${WORK_DIR}/.ssh"
+  local deploy_key_path="${ssh_dir}/id_ed25519_deploy"
+  # Сохраняем путь в глобальную переменную, чтобы он был доступен для print_summary
+  DEPLOY_KEY_PATH="${deploy_key_path}"
+
   if id -u "${DEPLOY_USER}" >/dev/null 2>&1; then
     echo "Пользователь ${DEPLOY_USER} уже существует. Пропускаем создание."
+    # Так как пользователь существует, мы предполагаем, что ключ уже был сгенерирован.
+    # Путь к ключу уже установлен в DEPLOY_KEY_PATH.
     return
   fi
 
@@ -220,7 +228,6 @@ setup_deploy_user() {
   echo "Пользователь ${DEPLOY_USER} создан и добавлен в группу docker."
 
   # Настройка SSH для входа по ключу
-  local ssh_dir="${WORK_DIR}/.ssh"
   install -d -m 700 -o "${DEPLOY_USER}" -g "${DEPLOY_USER}" "${ssh_dir}"
   touch "${ssh_dir}/authorized_keys"
   chmod 600 "${ssh_dir}/authorized_keys"
@@ -240,8 +247,6 @@ setup_deploy_user() {
 
   # Генерация и настройка ключа для деплоя
   echo "Генерация ключа для деплоя (формат PEM для GitHub Actions)..."
-  local deploy_key_path="${ssh_dir}/id_ed25519_deploy"
-  DEPLOY_KEY_PATH="${deploy_key_path}" # Сохраняем путь в глобальную переменную для print_summary
   ssh-keygen -m PEM -t ed25519 -f "${deploy_key_path}" -N "" -C "deploy-key-${BOT_NAME}@$(hostname)"
 
   cat "${deploy_key_path}.pub" >> "${ssh_dir}/authorized_keys"
@@ -410,11 +415,17 @@ display_github_secrets() {
   echo "CLEANUP_COMMAND:      ${CLEANUP_COMMAND_VAR}"
 
   echo "---------------------- SSH_PRIVATE_KEY (КРИТИЧЕСКИ ВАЖНО!) ------------------"
-  echo "Скопируйте всё, что находится между линиями ==, включая 'BEGIN' и 'END'."
-  echo "ВАЖНО: Секрет в GitHub должен содержать пустую строку после 'END PRIVATE KEY'."
-  echo "Скрипт выводит ее автоматически, просто убедитесь, что скопировали всё."
-  echo "===================================================================="
-  cat "${deploy_key_path}"
+  if [ -f "${deploy_key_path}" ]; then
+    echo "Скопируйте всё, что находится между линиями ==, включая 'BEGIN' и 'END'."
+    echo "ВАЖНО: Секрет в GitHub должен содержать пустую строку после 'END PRIVATE KEY'."
+    echo "Скрипт выводит ее автоматически, просто убедитесь, что скопировали всё."
+    echo "===================================================================="
+    cat "${deploy_key_path}"
+  else
+    echo "ПРЕДУПРЕЖДЕНИЕ: Файл приватного ключа '${deploy_key_path}' не найден."
+    echo "Ключ не был сгенерирован, так как пользователь уже существовал."
+    echo "Если вам нужен этот ключ, найдите его на сервере или удалите пользователя и запустите скрипт заново."
+  fi
 }
 
 print_summary() {

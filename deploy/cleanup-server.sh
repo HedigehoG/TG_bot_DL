@@ -1,86 +1,62 @@
 #!/bin/bash
 #
-# Скрипт для ПОЛНОГО УДАЛЕНИЯ бота и всех его данных с сервера.
-# ВНИМАНИЕ: Это действие необратимо!
+# Скрипт для ПОЛНОГО удаления бота, его данных и пользователя с сервера.
+# ВНИМАНИЕ: Это действие необратимо.
 #
-# Что делает скрипт:
-# 1. Проверяет права суперпользователя (root).
-# 2. Принимает имя пользователя для удаления в качестве аргумента.
-# 3. Останавливает и удаляет Docker-контейнер, сеть и тома.
-# 4. Удаляет пользователя и его домашнюю директорию.
-# 5. Удаляет связанные конфигурационные файлы (SSH, sudoers).
-# 6. Удаляет сам себя.
-#
-
 set -euo pipefail
 
-# --- Функции ---
+# Проверяем, что скрипт запущен с правами root, так как он будет удалять пользователя.
+if [ "$(id -u)" -ne 0 ]; then
+  echo "Ошибка: Этот скрипт должен выполняться с правами root (через sudo)." >&2
+  exit 1
+fi
 
-check_root() {
-  if [ "$(id -u)" -ne 0 ]; then
-    echo "Ошибка: Этот скрипт должен выполняться с правами root." >&2
-    exit 1
+if [ -z "$1" ]; then
+  echo "Ошибка: Имя пользователя для удаления не указано в качестве аргумента." >&2
+  echo "Пример использования: sudo $0 <имя_пользователя>" >&2
+  exit 1
+fi
+
+DEPLOY_USER="$1"
+WORK_DIR="/home/${DEPLOY_USER}"
+
+echo "--- Начало полного удаления для пользователя: ${DEPLOY_USER} ---"
+
+# 1. Останавливаем и удаляем Docker-сервисы, связанные с ботом.
+if [ -f "${WORK_DIR}/docker-compose.yml" ]; then
+  echo "Найден docker-compose.yml. Останавливаем и удаляем сервисы..."
+  # Переходим в рабочую директорию, чтобы docker-compose подхватил .env файлы
+  cd "${WORK_DIR}"
+
+  # Загружаем переменные из .env.server, чтобы docker-compose мог сделать подстановки (например, ${BOT_NAME})
+  if [ -f .env.server ]; then
+    set -o allexport
+    source .env.server
+    set +o allexport
   fi
-}
 
-# --- Основная логика ---
-
-main() {
-  check_root
-
-  if [ "$#" -ne 1 ]; then
-    echo "Ошибка: Не указано имя пользователя для удаления." >&2
-    echo "Использование: $0 <имя_пользователя>" >&2
-    exit 1
-  fi
-
-  local user_to_delete="$1"
-  local work_dir="/home/${user_to_delete}"
-  local compose_file="${work_dir}/docker-compose.yml"
-
-  echo "--- Начало полного удаления для пользователя: ${user_to_delete} ---"
-
-  # 1. Остановить и удалить Docker-ресурсы
-  if [ -f "${compose_file}" ]; then
-    echo "Найден docker-compose.yml. Останавливаем и удаляем сервисы..."
-    # Запускаем от имени пользователя, чтобы docker-compose нашел .env файл
-    sudo -u "${user_to_delete}" docker-compose --project-directory "${work_dir}" down --rmi all --volumes --remove-orphans || echo "Не удалось остановить docker-compose, возможно, сервисы уже остановлены. Продолжаем."
+  # ИСПОЛЬЗУЕМ 'docker compose' (v2) вместо устаревшего 'docker-compose' (v1)
+  if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    docker compose down --volumes --remove-orphans
+    echo "Docker-сервисы остановлены и удалены."
   else
-    echo "Файл docker-compose.yml не найден, пропускаем остановку сервисов."
+    echo "Предупреждение: Команда 'docker compose' не найдена. Пропускаем остановку сервисов."
   fi
+  cd /
+else
+  echo "Файл docker-compose.yml не найден в ${WORK_DIR}. Пропускаем шаг с Docker."
+fi
 
-  # 2. Удалить пользователя и его домашнюю директорию
-  if id -u "${user_to_delete}" >/dev/null 2>&1; then
-    echo "Завершение всех сессий и процессов пользователя ${user_to_delete}..."
-    # Это необходимо, чтобы userdel не выдавал ошибку "user is currently used by process".
-    # Сначала пытаемся использовать loginctl, так как это более "чистый" способ.
-    if command -v loginctl >/dev/null 2>&1; then
-      loginctl terminate-user "${user_to_delete}" || true
-    else
-      # Если loginctl недоступен, используем pkill как запасной вариант.
-      pkill -u "${user_to_delete}" || true
-    fi
-    sleep 2 # Небольшая пауза, чтобы система успела обработать завершение процессов.
-    echo "Удаление пользователя ${user_to_delete} и его домашней директории ${work_dir}..."
-    deluser --remove-home "${user_to_delete}" # Теперь удаление должно пройти без ошибок.
-    echo "Пользователь ${user_to_delete} удален."
-  else
-    echo "Пользователь ${user_to_delete} не найден, пропускаем удаление."
-  fi
+# 2. Завершаем все оставшиеся процессы пользователя.
+echo "Завершение всех сессий и процессов пользователя ${DEPLOY_USER}..."
+pkill -9 -u "${DEPLOY_USER}" || echo "Не удалось завершить процессы (возможно, их уже нет)."
+sleep 2
 
-  # 3. Удалить конфигурацию SSH и sudoers
-  echo "Очистка системных конфигураций..."
-  rm -f "/etc/ssh/sshd_config.d/99-disable-password-auth.conf"
-  rm -f "/etc/sudoers.d/99-${user_to_delete}-cleanup"
-  rm -f -- "$0" # Удаляем сам скрипт очистки
+# 3. Удаляем пользователя и его домашнюю директорию.
+echo "Удаление пользователя ${DEPLOY_USER} и его домашней директории ${WORK_DIR}..."
+deluser --remove-home "${DEPLOY_USER}" || echo "Предупреждение: Не удалось удалить пользователя (возможно, он уже удален)."
 
-  echo "Перезапуск SSH сервиса..."
-  systemctl restart sshd
+# 4. Удаляем файл sudoers, который разрешал этому пользователю запускать данный скрипт.
+rm -f "/etc/sudoers.d/99-${DEPLOY_USER}-cleanup"
 
-  echo "--- Очистка завершена ---"
-  echo "ВАЖНО: Не забудьте вручную:"
-  echo "  1. Удалить конфигурацию для вашего домена из файла Caddyfile."
-  echo "  2. Удалить секреты из настроек репозитория GitHub."
-}
-
-main "$@"
+echo "--- Очистка для пользователя ${DEPLOY_USER} завершена. ---"

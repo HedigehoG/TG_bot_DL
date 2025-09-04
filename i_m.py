@@ -8,6 +8,7 @@ import re
 import os
 import time
 import random
+import threading
 import logging
 from dotenv import load_dotenv
 from urllib.parse import urlparse, quote
@@ -121,7 +122,9 @@ bot = Bot(token=BOT_TOKEN) #,session=my_custom_session
 dp = Dispatcher()
 
 # --- Глобальный кэш для клиентов Instagrapi ---
+# Используем потокобезопасную блокировку, так как доступ к кэшу будет из разных потоков
 INSTA_CLIENTS_CACHE = {}
+INSTA_CLIENTS_LOCK = threading.Lock()
 
 # --- Функция для классификации сообщений с помощью AI ---
 async def classify_message_with_ai(text: str) -> dict:
@@ -279,59 +282,65 @@ MAX_VIDEO_SIZE_BYTES = 50 * 1024 * 1024 # 50 MB
 
 # --- Функция для получения клиента Instagram ---
 def get_instagram_client(user_id: str, session_data: dict | None = None, username: str | None = None, password: str | None = None) -> Client | None:
-	# --- Попытка 0: Получить клиент из кэша в памяти ---
-	if user_id in INSTA_CLIENTS_CACHE:
-		cl = INSTA_CLIENTS_CACHE[user_id]
-		try:
-			# Быстрая проверка, жива ли сессия у кэшированного клиента
-			cl.get_timeline_feed()
-			logging.info(f"✅ Используется кэшированный клиент instagrapi для user {user_id}")
-			return cl
-		except (LoginRequired, ChallengeRequired, ClientError) as e:
-			logging.warning(f"⚠️ Кэшированный клиент для user {user_id} недействителен: {e}. Удаляем из кэша.")
-			del INSTA_CLIENTS_CACHE[user_id]
+    # --- Попытка 0: Получить клиент из кэша в памяти (потокобезопасно) ---
+    cached_client = None
+    with INSTA_CLIENTS_LOCK:
+        cached_client = INSTA_CLIENTS_CACHE.get(user_id)
 
-	# --- Если в кэше нет или он недействителен, создаем новый ---
+    if cached_client:
+        try:
+            # Быстрая проверка, жива ли сессия (ВНЕ блокировки, чтобы не тормозить другие потоки)
+            cached_client.get_timeline_feed()
+            logging.info(f"✅ Используется кэшированный клиент instagrapi для user {user_id}")
+            return cached_client
+        except (LoginRequired, ChallengeRequired, ClientError) as e:
+            logging.warning(f"⚠️ Кэшированный клиент для user {user_id} недействителен: {e}. Удаляем из кэша.")
+            # Удаляем недействительный клиент под блокировкой во избежание гонки состояний
+            with INSTA_CLIENTS_LOCK:
+                # Проверяем, что клиент в кэше все еще тот самый, который мы проверяли
+                if INSTA_CLIENTS_CACHE.get(user_id) == cached_client:
+                    del INSTA_CLIENTS_CACHE[user_id]
 
-	# Попытка 1: Восстановить сессию из Redis
-	if session_data:
-		cl = Client()
-		cl.delay_range = [1, 4]  # Уменьшаем задержку для восстановления сессии
-		proxy = get_proxy("tor") # Используем Tor для Instagram
-		if proxy:
-			cl.set_proxy(proxy)
-		try:
-			cl.set_settings(session_data)
-			cl.get_timeline_feed()
-			logging.info(f"✅ Вход по сессии для user {user_id} прошёл успешно")
-			INSTA_CLIENTS_CACHE[user_id] = cl # Сохраняем в кэш
-			return cl
-		except Exception as e:
-			logging.warning(f"⚠️ Не удалось восстановить сессию для user {user_id}: {e}. Пробуем войти по паролю.")
+    # --- Если в кэше нет или он недействителен, создаем новый ---
+    new_client = None
 
-	# Попытка 2: Войти по логину и паролю
-	if username and password:
-		cl = Client() # Создаем НОВЫЙ, чистый клиент для логина
-		cl.delay_range = [1, 6]
-		proxy = get_proxy("instagram") # Используем Tor для Instagram
-		if proxy:
-			cl.set_proxy(proxy)
-		try:
-			logging.info(f"Используются кастомные настройки устройства для нового входа user {user_id}")
-			cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
-			cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
-			cl.login(username, password)
-			logging.info(f"✅ Успешный вход по логину/паролю для user {user_id}")
-			INSTA_CLIENTS_CACHE[user_id] = cl # Сохраняем в кэш
-			return cl
-		except ChallengeRequired:
-			logging.warning(f"❗ Instagram требует Challenge (email/SMS) для user {user_id}")
-		except BadPassword:
-			logging.warning(f"❗ Неверный пароль для user {user_id}")
-		except Exception as e:
-			logging.error(f"❌ Ошибка логина для user {user_id}: {e}")
+    # Попытка 1: Восстановить сессию из Redis
+    if session_data:
+        cl = Client()
+        cl.delay_range = [1, 4]
+        proxy = get_proxy("instagram")
+        if proxy: cl.set_proxy(proxy)
+        try:
+            cl.set_settings(session_data)
+            cl.get_timeline_feed()
+            logging.info(f"✅ Вход по сессии для user {user_id} прошёл успешно")
+            new_client = cl
+        except Exception as e:
+            logging.warning(f"⚠️ Не удалось восстановить сессию для user {user_id}: {e}. Пробуем войти по паролю.")
 
-	return None
+    # Попытка 2: Войти по логину и паролю (если восстановление по сессии не удалось)
+    if not new_client and username and password:
+        cl = Client()
+        cl.delay_range = [1, 6]
+        proxy = get_proxy("instagram")
+        if proxy: cl.set_proxy(proxy)
+        try:
+            cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
+            cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
+            cl.login(username, password)
+            logging.info(f"✅ Успешный вход по логину/паролю для user {user_id}")
+            new_client = cl
+        except (ChallengeRequired, BadPassword) as e:
+            logging.warning(f"❗ Ошибка входа для user {user_id}: {e}")
+        except Exception as e:
+            logging.error(f"❌ Неизвестная ошибка логина для user {user_id}: {e}")
+
+    # Сохраняем новый успешный клиент в кэш
+    if new_client:
+        with INSTA_CLIENTS_LOCK:
+            INSTA_CLIENTS_CACHE[user_id] = new_client
+
+    return new_client
 
 # Вспомогательная функция для получения информации о медиа
 def get_media_info_private(client: Client, code: str) -> dict:
@@ -443,9 +452,9 @@ async def cmd_igpass(message: Message):
 @dp.message(Command("iglogout"))
 async def cmd_iglogout(message: Message):
 	user_id = str(message.from_user.id)
-	# Удаляем клиент из кэша в памяти, если он там есть
-	if user_id in INSTA_CLIENTS_CACHE:
-		del INSTA_CLIENTS_CACHE[user_id]
+	# Атомарно и потокобезопасно удаляем клиент из кэша в памяти, если он там есть.
+	# .pop() является атомарной операцией в CPython, что защищает от гонки состояний.
+	if INSTA_CLIENTS_CACHE.pop(user_id, None):
 		logging.info(f"Клиент для user {user_id} удален из кэша памяти.")
 	deleted_count = await r.hdel(f"{INSTA_REDIS_KEY}:user0", user_id)
 	await message.reply("✅ Вы вышли из системы." if deleted_count > 0 else "🤔 Вы и так не были авторизованы.")
@@ -1415,8 +1424,12 @@ if __name__ == "__main__":
 	logging.info("Запуск бота...")
 	try:
 		asyncio.run(main())
-	except (KeyboardInterrupt, SystemExit) as e:
-		if isinstance(e, SystemExit) and e.code != 0:
-			 logging.critical("Бот остановлен из-за критической ошибки при запуске.")
+	except KeyboardInterrupt:
+		# Обработка Ctrl+C
+		logging.info("Бот остановлен вручную (KeyboardInterrupt).")
+	except SystemExit as e:
+		# Обработка вызовов sys.exit()
+		if e.code == 0 or e.code is None:
+			logging.info("Бот штатно завершил работу.")
 		else:
-			 logging.info("Бот остановлен.")
+			logging.critical(f"Бот остановлен из-за критической ошибки (exit code: {e.code}).")
