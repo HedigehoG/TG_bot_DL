@@ -25,6 +25,7 @@ from instagrapi.exceptions import ( # Исключения из instagrapi
 )
 from pydantic import ValidationError
 
+# pip install google-genai
 from google import genai
 from google.genai.types import Tool, GoogleSearch, GenerateContentConfig
 
