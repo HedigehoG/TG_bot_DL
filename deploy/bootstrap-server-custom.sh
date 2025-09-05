@@ -206,6 +206,44 @@ install_docker() {
   echo "Docker успешно установлен и запущен."
 }
 
+install_tor() {
+  if systemctl is-active --quiet tor; then
+    echo "Tor сервис уже запущен. Пропускаем установку."
+    # Убедимся, что пользователь в нужной группе, даже если Tor уже был установлен
+    if ! groups "${DEPLOY_USER}" | grep -q '\bdebian-tor\b'; then
+        echo "Добавление существующего пользователя ${DEPLOY_USER} в группу 'debian-tor'..."
+        usermod -aG debian-tor "${DEPLOY_USER}"
+    fi
+    return
+  fi
+
+  echo "Установка Tor..."
+  apt-get -qq update
+  apt-get -qq install -y tor
+
+  # Добавляем пользователя для деплоя в группу debian-tor.
+  # Это стандартный и безопасный способ предоставить доступ к файлу cookie и сокету управления Tor.
+  echo "Добавление пользователя ${DEPLOY_USER} в группу 'debian-tor' для доступа к ControlPort..."
+  usermod -aG debian-tor "${DEPLOY_USER}"
+
+  # Перезапускаем Tor, чтобы применились стандартные настройки с ControlPort
+  systemctl restart tor
+  echo "Tor успешно установлен и запущен."
+
+  # Проверка создания cookie файла
+  echo "Ожидание создания control cookie файла (до 10 секунд)..."
+  for i in $(seq 1 5); do
+    if [ -f /run/tor/control.authcookie ]; then
+      echo "Файл /run/tor/control.authcookie успешно найден."
+      return
+    fi
+    sleep 2
+  done
+
+  echo "ПРЕДУПРЕЖДЕНИЕ: Файл /run/tor/control.authcookie не был создан." >&2
+  echo "Это может привести к ошибкам в работе бота. Проверьте статус сервиса Tor: 'systemctl status tor'." >&2
+}
+
 setup_deploy_user() {
   # Определяем пути заранее, чтобы они были доступны в любом случае
   local ssh_dir="${WORK_DIR}/.ssh"
@@ -453,6 +491,7 @@ main() {
   echo "--------------------------------------------------------"
 
   install_docker
+  install_tor
   setup_deploy_user
   setup_cleanup_script
   create_server_env_file
