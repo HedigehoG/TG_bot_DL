@@ -90,6 +90,9 @@ REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
+# --- Tor ---
+TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
+
 
 # --- insta dev ---
 IG_DEVICE_CONFIG = {
@@ -257,7 +260,7 @@ def check_tor_connection(control_port=9051, cookie_path="/run/tor/control.authco
 	Использует CookieAuthentication.
 	"""
 	try:
-		with Controller.from_port(port=control_port) as controller:
+		with Controller.from_port(address=TOR_HOST, port=control_port) as controller:
 			controller.authenticate()  # cookie auth by default
 			logging.info("✅ Успешно подключено к Tor.")
 
@@ -269,7 +272,7 @@ def check_tor_connection(control_port=9051, cookie_path="/run/tor/control.authco
 					# Даем Tor время на построение новой цепочки
 					time.sleep(2)
 					# Для проверки IP нужно, чтобы сам запрос шел через Tor
-					tor_proxy = "socks5h://127.0.0.1:9050" # Используем socks5h для DNS через прокси
+					tor_proxy = f"socks5h://{TOR_HOST}:9050" # Используем socks5h для DNS через прокси
 					proxies = { "http": tor_proxy, "https": tor_proxy }
 					try:
 						# Используем requests с указанием прокси
@@ -296,7 +299,7 @@ INSTAGRAM_PROXY = os.getenv("INSTAGRAM_PROXY")
 def get_proxy(args=None):
 	proxies = {
 		"instagram": lambda: INSTAGRAM_PROXY,
-		"tor": lambda: "socks5://127.0.0.1:9050" if check_tor_connection() else None,
+		"tor": lambda: f"socks5://{TOR_HOST}:9050" if check_tor_connection() else None,
 		"freeproxy": lambda: None
 	}
 	proxy = proxies.get(args, lambda: None)()

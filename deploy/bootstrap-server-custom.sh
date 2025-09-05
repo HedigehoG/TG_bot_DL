@@ -16,7 +16,7 @@ set -euo pipefail
 # --- Глобальные переменные и значения по умолчанию ---
 BOT_NAME_DEFAULT="bot_main"
 WEBHOOK_HOST_URL=${WEBHOOK_HOST_URL:-}
-LISTEN_PORT_DEFAULT=8080 # Внутренний порт приложения, должен совпадать с тем, что в Dockerfile
+LISTEN_PORT_DEFAULT=8080 # Порт приложения, который будет открыт на хосте
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-} # Пример: my-username/my-cool-repo
 
 # Переменные, которые будут определены интерактивно
@@ -175,7 +175,7 @@ gather_interactive_inputs() {
 
   if [ -z "${LISTEN_PORT}" ]; then
     local listen_port_input
-    read -p "Введите порт, который будет слушать бот на хосте [${LISTEN_PORT_DEFAULT}]: " listen_port_input
+    read -p "Введите порт, который будет слушать бот на хосте (например, 8080, 8443) [${LISTEN_PORT_DEFAULT}]: " listen_port_input
     LISTEN_PORT=${listen_port_input:-${LISTEN_PORT_DEFAULT}}
   else
     echo "Используется порт для прослушивания из переменной окружения: ${LISTEN_PORT}"
@@ -299,7 +299,6 @@ create_server_env_file() {
 # Он создается один раз при настройке и НЕ перезаписывается во время деплоя.
 # Секретные переменные хранятся в файле .env, который генерируется из GitHub Secrets.
 BOT_NAME=${BOT_NAME}
-LISTEN_PORT=${LISTEN_PORT}
 
 # --- Webhook (управляется этим скриптом) ---
 WEBHOOK_HOST=${WEBHOOK_HOST_URL}
@@ -326,21 +325,18 @@ create_docker_compose_file() {
   cat > "${compose_file}" <<YML
 services:
   bot:
-    # Имя образа будет передаваться через переменную окружения BOT_IMAGE во время деплоя.
-    # Явно задаем имя контейнера, чтобы оно было предсказуемым (например, 'bot_main'),
-    # вместо автоматически сгенерированного. Значение берется из .env файла.
+    # Используем сеть хоста, чтобы контейнер мог получить доступ к Tor (localhost:9051)
+    # и другим сервисам на хосте. Это также означает, что порт, который слушает
+    # приложение внутри контейнера (LISTEN_PORT), будет напрямую открыт на хосте.
+    network_mode: host
     container_name: \${BOT_NAME}
-    # Здесь мы указываем значение по умолчанию для локальных запусков.
     image: \${BOT_IMAGE:-${bot_image}}
     env_file:
       - .env.server # Статичная конфигурация сервера
       - .env        # Секреты, управляемые через CI/CD
-    ports:
-      # Проброс порта с хоста (переменная из .env) в контейнер (константа).
-      - "\${BOT_PORT}:${CONTAINER_PORT}"
-      # --- Для отладки ---
-      # Раскомментируйте следующую строку, чтобы пробросить порт для отладчика debugpy.
-      # - "5678:5678"
+    volumes:
+      # Пробрасываем cookie-файл для управления Tor (только для чтения)
+      - /run/tor/control.authcookie:/run/tor/control.authcookie:ro
     restart: unless-stopped
     # Настройка ротации логов, чтобы они не занимали все место на диске.
     # Храним 3 файла логов по 10MB каждый.
@@ -350,8 +346,8 @@ services:
         max-size: "10m"
         max-file: "3"
     # Ограничиваем ресурсы для защиты сервера от перегрузки.
-    mem_limit: 150m
-    memswap_limit: 300m
+    mem_limit: 200m
+    memswap_limit: 400m
     healthcheck:
       # Проверяем, отвечает ли веб-сервер внутри контейнера.
       # ВАЖНО: для работы healthcheck в вашем Docker-образе должен быть установлен curl,
