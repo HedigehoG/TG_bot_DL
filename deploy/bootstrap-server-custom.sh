@@ -16,15 +16,14 @@ set -euo pipefail
 # --- Глобальные переменные и значения по умолчанию ---
 BOT_NAME_DEFAULT="bot_main"
 WEBHOOK_HOST_URL=${WEBHOOK_HOST_URL:-}
-HOST_PORT_DEFAULT=8001
-CONTAINER_PORT=8080 # Внутренний порт приложения, должен совпадать с тем, что в Dockerfile
+LISTEN_PORT_DEFAULT=8080 # Внутренний порт приложения, должен совпадать с тем, что в Dockerfile
 GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-} # Пример: my-username/my-cool-repo
 
 # Переменные, которые будут определены интерактивно
 BOT_NAME=${BOT_NAME:-}
 DEPLOY_USER=${DEPLOY_USER:-}
 WORK_DIR="" # Определяется на основе DEPLOY_USER
-HOST_PORT=${HOST_PORT:-}
+LISTEN_PORT=${LISTEN_PORT:-}
 CLEANUP_COMMAND_VAR=""
 DEPLOY_KEY_PATH=""
 
@@ -174,12 +173,12 @@ gather_interactive_inputs() {
     done
   fi
 
-  if [ -z "${HOST_PORT}" ]; then
-    local host_port_input
-    read -p "Введите внешний порт для бота (на хосте) [${HOST_PORT_DEFAULT}]: " host_port_input
-    HOST_PORT=${host_port_input:-${HOST_PORT_DEFAULT}}
+  if [ -z "${LISTEN_PORT}" ]; then
+    local listen_port_input
+    read -p "Введите порт, который будет слушать бот на хосте [${LISTEN_PORT_DEFAULT}]: " listen_port_input
+    LISTEN_PORT=${listen_port_input:-${LISTEN_PORT_DEFAULT}}
   else
-    echo "Используется порт хоста из переменной окружения: ${HOST_PORT}"
+    echo "Используется порт для прослушивания из переменной окружения: ${LISTEN_PORT}"
   fi
 }
 
@@ -300,8 +299,7 @@ create_server_env_file() {
 # Он создается один раз при настройке и НЕ перезаписывается во время деплоя.
 # Секретные переменные хранятся в файле .env, который генерируется из GitHub Secrets.
 BOT_NAME=${BOT_NAME}
-BOT_PORT=${HOST_PORT}
-LISTEN_PORT=${CONTAINER_PORT}
+LISTEN_PORT=${LISTEN_PORT}
 
 # --- Webhook (управляется этим скриптом) ---
 WEBHOOK_HOST=${WEBHOOK_HOST_URL}
@@ -358,7 +356,7 @@ services:
       # Проверяем, отвечает ли веб-сервер внутри контейнера.
       # ВАЖНО: для работы healthcheck в вашем Docker-образе должен быть установлен curl,
       # а само приложение должно отвечать на GET-запросы по пути /health.
-      test: ["CMD", "curl", "-f", "http://localhost:${CONTAINER_PORT}/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:\${LISTEN_PORT}/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -369,12 +367,6 @@ services:
     dns:
       - 8.8.8.8
       - 1.1.1.1 # Резервный DNS-сервер
-    networks:
-      - botnet
-
-networks:
-  botnet:
-    driver: bridge
 YML
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${compose_file}"
   echo "docker-compose.yml файл создан."
@@ -391,7 +383,7 @@ display_caddy_config() {
   echo "(обычно /etc/caddy/Caddyfile) и перезапустите Caddy (systemctl reload caddy):"
   echo "--------------------------------------------------------------------------------"
   # Используем printf для форматирования, чтобы избежать проблем с отступами
-  printf "\n%s {\n    reverse_proxy localhost:%s\n}\n\n" "${hostname}" "${HOST_PORT}"
+  printf "\n%s {\n    reverse_proxy localhost:%s\n}\n\n" "${hostname}" "${LISTEN_PORT}"
   echo "--------------------------------------------------------------------------------"
   echo "Caddy автоматически получит и будет обновлять для вас SSL-сертификат."
   echo

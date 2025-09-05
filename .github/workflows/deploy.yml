@@ -117,31 +117,25 @@ jobs:
               set +o allexport
             fi
             
-            echo "--- Ensuring production mode (disabling debug) ---"
-
-            echo "1. Commenting out debug port in docker-compose.yml"
-            # Комментируем строку, если она еще не закомментирована.
-            # Этот sed ищет строку, начинающуюся с пробелов и "- "5678:5678"", и добавляет "# " после пробелов.
-            sed -i -E 's/^(\s*)(\- "5678:5678")/\1# \2/' docker-compose.yml
-
-            echo "2. Ensuring restart policy is 'unless-stopped'"
+            echo "--- Ensuring production mode ---"
+            echo "1. Ensuring restart policy is 'unless-stopped'"
             # Устанавливаем политику перезапуска для продакшена.
             sed -i -E 's/^\s*restart:.*/    restart: unless-stopped/' docker-compose.yml
 
-            echo "3. Ensuring healthcheck is enabled and adjusting interval"
+            echo "2. Ensuring healthcheck is enabled and adjusting interval"
             # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
             sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
             # Увеличиваем интервал проверки до 5 минут, чтобы уменьшить количество логов.
             # Если строка 'interval:' уже есть, заменяем ее. Если нет - добавляем после строки 'test:'.
             if grep -q '^\s*interval:' docker-compose.yml; then
-              sed -i -E 's/^\s*interval:.*/      interval: 5m/' docker-compose.yml
+              sed -i -E 's/^\s*interval:.*/      interval: 1h/' docker-compose.yml
             else
-              sed -i -E '/^\s*test:.*/a \      interval: 5m' docker-compose.yml
+              sed -i -E '/^\s*test:.*/a \      interval: 1h' docker-compose.yml
             fi
 
-            echo "4. Ensuring production memory limits"
+            echo "3. Ensuring production memory limits"
             # Возвращаем стандартные лимиты памяти для продакшена.
-            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 150m/' docker-compose.yml
+            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 200m/' docker-compose.yml
             sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 300m/' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
@@ -245,27 +239,22 @@ jobs:
             grep -v '^DEBUG_MODE=' .env > .env.tmp && mv .env.tmp .env
             echo "DEBUG_MODE=1" >> .env
 
-            echo "2. Uncommenting debug port in docker-compose.yml"
-            # Раскомментируем строку, если она закомментирована.
-            # Этот sed ищет строку, начинающуюся с пробелов, #, еще пробелов и "- "5678:5678"", и заменяет ее на ту же строку без #.
-            sed -i -E 's/^(\s*)#\s*(- "5678:5678")/\1\2/' docker-compose.yml
-            
-            echo "3. Setting restart policy to 'no'"
+            echo "2. Setting restart policy to 'no'"
             # Отключаем автоматический перезапуск, чтобы можно было изучить логи в случае сбоя.
             sed -i -E 's/^\s*restart:.*/    restart: "no"/' docker-compose.yml
 
-            echo "4. Disabling healthcheck for debugging"
+            echo "3. Disabling healthcheck for debugging"
             # Заменяем реальную проверку на команду, которая всегда успешна.
             # Это предотвратит остановку контейнера, пока он ожидает подключения отладчика.
             sed -i -E 's/^\s*test:.*/      test: ["CMD", "true"]/' docker-compose.yml
 
-            echo "5. Increasing memory limit for debugging"
+            echo "4. Increasing memory limit for debugging"
             # Увеличиваем лимит памяти, т.к. debugpy добавляет накладные расходы,
             # и OOM killer может остановить контейнер.
             sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 512m/' docker-compose.yml
             sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 1024m/' docker-compose.yml
 
-            echo "6. Restarting container with new settings"
+            echo "5. Restarting container with new settings"
             docker compose up -d --force-recreate --remove-orphans
 
             echo "--- Debug mode enabled. Waiting for container... ---"
