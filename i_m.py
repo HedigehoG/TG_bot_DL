@@ -1257,49 +1257,100 @@ def normalize_for_match(s: str) -> str:
 async def handle_song_search(message: Message, song_obj: dict):
 	"""
 	Обрабатывает запрос на поиск песни, используя несколько источников параллельно.
-	Фильтрует и сортирует результаты для максимальной релевантности.
+	Приоритетно ищет точное совпадение и немедленно загружает его.
+	Если точных совпадений нет, собирает все частичные совпадения и предлагает пользователю выбор.
 	"""
 	song_name = song_obj.get('song')
 	duration = song_obj.get('duration') or 0
+	normalized_query = normalize_for_match(song_name)
 
-	status_msg = await message.answer(f"🎤 Ищу «{song_name}» на всех доступных источниках...")
+	status_msg = await message.answer(f"🎤 Ищу «{song_name}»...")
+
+	# Внутренняя функция для поиска и фильтрации на одном источнике
+	async def _search_and_filter_provider(provider_config: dict) -> tuple[list, list]:
+		"""Ищет песни на одном источнике и разделяет их на точные и частичные совпадения."""
+		all_found = await _parse_music_site(provider_config, song_name)
+		if not all_found:
+			return [], []
+
+		exact_matches = []
+		partial_matches = []
+		
+		for song in all_found:
+			full_title = f"{song.get('artist')} {song.get('title')}"
+			normalized_title = normalize_for_match(full_title)
+			
+			if normalized_title == normalized_query:
+				exact_matches.append(song)
+			elif normalized_query in normalized_title:
+				partial_matches.append(song)
+		
+		return exact_matches, partial_matches
+
+	# --- 1. Параллельный поиск с ранним выходом при точном совпадении ---
+	tasks = [asyncio.create_task(_search_and_filter_provider(provider)) for provider in SEARCH_PROVIDER_CONFIGS]
+	all_partial_songs = []
 	
-	# --- 1. Параллельный поиск ---
-	tasks = [_parse_music_site(provider, song_name) for provider in SEARCH_PROVIDER_CONFIGS]
-	results = await asyncio.gather(*tasks, return_exceptions=True)
+	# Используем asyncio.as_completed для обработки результатов по мере их поступления
+	for future in asyncio.as_completed(tasks):
+		try:
+			exact_matches, partial_matches = await future
+			all_partial_songs.extend(partial_matches) # Собираем частичные совпадения в любом случае
 
-	all_songs = []
-	for i, result in enumerate(results):
-		if isinstance(result, list):
-			all_songs.extend(result)
+			# Если найдены точные совпадения, выбираем лучшее и завершаем поиск
+			if exact_matches:
+				logging.info(f"Найдено точное совпадение. Начинаю загрузку.")
+				
+				# Если есть длительность, сортируем, чтобы найти наиболее близкий трек
+				if duration > 0:
+					exact_matches.sort(key=lambda s: abs(s.get('duration', 0) - duration))
+				
+				best_match = exact_matches[0]
 
-	if not all_songs:
+				await status_msg.edit_text(f"✅ Найдено точное совпадение, скачиваю...")
+				audio_data = await download_audio(best_match.get('link'))
+				if audio_data:
+					await message.answer_audio(
+						audio=BufferedInputFile(audio_data, filename=f"{best_match.get('artist')}-{best_match.get('title')}.mp3"),
+						performer=best_match.get('artist'),
+						title=best_match.get('title'),
+						duration=best_match.get('duration')
+					)
+					await status_msg.delete()
+				else:
+					await status_msg.edit_text("❌ Ошибка скачивания трека.")
+
+				# Отменяем оставшиеся задачи, так как мы нашли то, что искали
+				for task in tasks:
+					if not task.done():
+						task.cancel()
+				return # Выход из функции
+
+		except asyncio.CancelledError:
+			logging.info("Задача поиска отменена, так как точное совпадение уже найдено.")
+		except Exception as e:
+			logging.error(f"Ошибка при обработке результатов поиска: {e}", exc_info=True)
+
+	# --- 2. Обработка, если точных совпадений не найдено ни на одном источнике ---
+	if not all_partial_songs:
 		await status_msg.edit_text("❌ Ничего не найдено по вашему запросу.")
 		return
 
-	# --- 2. Фильтрация и сортировка ---
-	normalized_query = normalize_for_match(song_name)
-	
-	# Ищем совпадения, сначала точные, потом частичные
-	filtered_songs = [s for s in all_songs if normalize_for_match(f"{s.get('artist')} {s.get('title')}") == normalized_query]
-	if not filtered_songs:
-		filtered_songs = [s for s in all_songs if normalized_query in normalize_for_match(f"{s.get('artist')} {s.get('title')}")]
-
-	songs_to_process = filtered_songs if filtered_songs else all_songs
-	
+	# Сортируем все собранные частичные совпадения по длительности
 	if duration > 0:
-		songs_to_process.sort(key=lambda s: abs(s.get('duration', 0) - duration))
+		all_partial_songs.sort(key=lambda s: abs(s.get('duration', 0) - duration))
 
-	# Удаляем дубликаты
+	# Удаляем дубликаты из общего списка
 	unique_songs = []
 	seen = set()
-	for song in songs_to_process:
+	for song in all_partial_songs:
+		# Используем нормализованные исполнителя и название для идентификации дубликатов
 		identifier = (normalize_for_match(song.get('artist')), normalize_for_match(song.get('title')))
 		if identifier not in seen:
 			unique_songs.append(song)
 			seen.add(identifier)
 	
-	logging.info(f"После фильтрации и дедупликации осталось {len(unique_songs)} треков.")
+	logging.info(f"Точных совпадений не найдено. После дедупликации осталось {len(unique_songs)} треков для выбора.")
 
 	if unique_songs:
 		# --- Если найден всего 1 трек, сразу его загружаем ---
@@ -1314,7 +1365,7 @@ async def handle_song_search(message: Message, song_obj: dict):
 				await status_msg.edit_text("❌ Ошибка скачивания трека.")
 			return
 
-		await status_msg.delete() # Удаляем сообщение "Ищу..."
+		await status_msg.delete()
 		await display_music_list(message, unique_songs)
 	else:
 		await status_msg.edit_text("❌ Подходящих треков не найдено после фильтрации.")
