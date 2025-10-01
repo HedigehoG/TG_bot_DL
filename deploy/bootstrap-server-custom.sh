@@ -468,8 +468,9 @@ print_summary() {
   echo "   (Settings -> Secrets and variables -> Actions -> New repository secret)"
   echo "   - Добавьте все секреты, показанные выше (SSH_HOST, SSH_USER, CLEANUP_COMMAND и SSH_PRIVATE_KEY)."
   echo "   - Добавьте самый важный секрет: \`BOT_TOKEN\` (токен от @BotFather)."
-  echo "   - Создайте мультистрочный секрет \`OTHER\` и добавьте в него остальные переменные,"
-  echo "     такие как GOOGLE_API_KEY, TG_IDS и другие (см. новый файл .env.example)."
+  echo "   - Создайте мультистрочный секрет \`OTHER\` и добавьте в него остальные переменные в формате КЛЮЧ=ЗНАЧЕНИЕ, каждая с новой строки."
+  echo "     Например:"
+  echo "     GOOGLE_API_KEY=AIzaSy...XYZ\n     TG_IDS=12345678,87654321\n     RUSSIAN_PROXIES=http://user:pass@host:port,..."
 
   display_caddy_config
 
