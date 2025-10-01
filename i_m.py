@@ -1031,9 +1031,9 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 		'Origin': 'https://zvuk.com',
 	}
 	music_info = None
-	# Вы правы, токен необходим. Возвращаем логику его получения.
+	# Как вы и указали, токен необходим для работы. Возвращаем логику его получения.
 	try:
-		async with aiohttp.ClientSession(headers=headers) as session:
+		async with aiohttp.ClientSession() as session:
 			# Шаг 2.1: Получаем временный токен
 			async with session.get("https://zvuk.com/api/tiny/profile", headers=headers, timeout=10) as resp:
 				if resp.status != 200:
@@ -1045,7 +1045,7 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 			if not token:
 				await p_msg.edit_text("❌ Временный токен от Звук пуст.")
 				return
-			
+
 			# Добавляем полученный токен в заголовки для следующего запроса
 			graphql_headers = headers.copy()
 			graphql_headers["x-auth-token"] = token
@@ -1085,10 +1085,17 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 							album_year_val = album_date.split('-')[0] if album_date else None
 							album_year = f"({album_year_val})" if album_year_val else ""
 							
-							# Исправляем URL обложки: API может вернуть URL без протокола (//i.zvuk.com/...)
-							# Telegram не может обработать такие ссылки, поэтому добавляем https:
+							# --- Обработка URL обложки ---
 							cover_url_raw = release_info.get("image", {}).get("src")
-							cover_url = f"https:{cover_url_raw}" if cover_url_raw and cover_url_raw.startswith('//') else cover_url_raw
+							cover_url = None
+							if cover_url_raw:
+								# 1. API может вернуть URL-шаблон с {size}. Заменяем его на 'medium'.
+								# Также отрезаем параметр hash, чтобы получить чистый URL.
+								base_url = cover_url_raw.split('&size=')[0]
+								cover_url = f"{base_url}&size=medium"
+								# 2. Добавляем протокол, если он отсутствует (//i.zvuk.com/...)
+								if cover_url.startswith('//'):
+									cover_url = f"https:{cover_url}"
 
 							music_info = {
 								'artist': artists, 'title': title, 'duration_sec': duration_sec,
