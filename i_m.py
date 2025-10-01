@@ -232,7 +232,7 @@ async def classify_message_with_ai(text: str) -> dict:
 			contents=text,
 			config=GenerateContentConfig(
 				tools=[Tool(googleSearch=GoogleSearch()),],
-				response_mime_type="application/json",
+				# response_mime_type="application/json",
 				system_instruction=prompt,
 			),
 		) # response.text будет сырой строкой от Gemini
