@@ -1119,10 +1119,20 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 			# Решение: Скачиваем картинку сами с нужным заголовком и отправляем как BufferedInputFile.
 			try:
 				async with aiohttp.ClientSession() as session:
-					async with session.get(music_info['cover_url'], headers={'User-Agent': headers['User-Agent']}) as img_resp:
+					img_url = music_info['cover_url']
+					async with session.get(img_url, headers={'User-Agent': headers['User-Agent']}) as img_resp:
 						if img_resp.status == 200:
 							image_data = await img_resp.read()
-							await message.answer_photo(photo=BufferedInputFile(image_data, filename="cover.jpg"), caption=info_caption, parse_mode=ParseMode.HTML)
+							# Проверяем, что у изображения есть размеры, чтобы избежать ошибки PHOTO_INVALID_DIMENSIONS
+							if len(image_data) > 0:
+								try:
+									await message.answer_photo(photo=BufferedInputFile(image_data, filename="cover.jpg"), caption=info_caption, parse_mode=ParseMode.HTML)
+								except TelegramAPIError as e:
+									if "PHOTO_INVALID_DIMENSIONS" in str(e):
+										logging.warning(f"Обложка Zvuk имеет неверные размеры: {img_url}. Отправляем без нее.")
+										await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+									else: raise
+							else: await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 						else: # Если скачать не удалось, отправляем без картинки
 							await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 			except Exception as e:
@@ -1307,10 +1317,10 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	"""Универсальный парсер музыкальных сайтов, управляемый конфигурацией."""
 	# Специальная обработка для skysound, где запрос - это поддомен
 	if config["name"] == "skysound7.com":
-		# 1. Подготавливаем запрос: заменяем пробелы на дефисы и удаляем все недопустимые символы.
-		# Это необходимо для корректного Punycode-кодирования.
-		prepared_query = re.sub(r'[^a-zA-Zа-яА-Я0-9\s-]', '', song_name).replace(' ', '-')
-		# 2. Кодируем подготовленный запрос в punycode и формируем URL.
+		# 1. Заменяем все последовательности не-буквенно-цифровых символов на один дефис.
+		# Это решает проблему с "Jubilee - Кровоточие", превращая его в "Jubilee-Кровоточие".
+		prepared_query = re.sub(r'[^a-zA-Zа-яА-Я0-9]+', '-', song_name).strip('-')
+		# 2. Кодируем в punycode.
 		encoded_query = prepared_query.encode('idna').decode('ascii')
 		search_url = config["base_url"].format(query_subdomain=encoded_query)
 	else:
@@ -1335,7 +1345,12 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 
 	try:
 		# Специальная обработка для muzika.fun, которая требует сохранения Referer при редиректе
-		if config["name"] == "muzika.fun":
+		# и замены дефиса на пробел в запросе.
+		if config["name"] == "muzika.fun" and ' - ' in song_name:
+			# Сайт ожидает пробел вместо дефиса между исполнителем и названием
+			modified_song_name = song_name.replace(' - ', ' ', 1)
+			search_url = config["base_url"] + config["search_path"].format(query=quote(modified_song_name))
+
 			async with aiohttp.ClientSession(**session_args) as session:
 				# Делаем первый запрос, не следуя редиректам
 				async with session.get(search_url, timeout=15, allow_redirects=False) as response:
