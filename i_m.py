@@ -1115,7 +1115,19 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 		)
 		await p_msg.delete()
 		if music_info.get('cover_url'):
-			await message.answer_photo(photo=music_info['cover_url'], caption=info_caption, parse_mode=ParseMode.HTML)
+			# Проблема: Telegram не может скачать обложку, так как сервер Zvuk требует User-Agent.
+			# Решение: Скачиваем картинку сами с нужным заголовком и отправляем как BufferedInputFile.
+			try:
+				async with aiohttp.ClientSession() as session:
+					async with session.get(music_info['cover_url'], headers={'User-Agent': headers['User-Agent']}) as img_resp:
+						if img_resp.status == 200:
+							image_data = await img_resp.read()
+							await message.answer_photo(photo=BufferedInputFile(image_data, filename="cover.jpg"), caption=info_caption, parse_mode=ParseMode.HTML)
+						else: # Если скачать не удалось, отправляем без картинки
+							await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+			except Exception as e:
+				logging.error(f"Ошибка при скачивании обложки Zvuk: {e}")
+				await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 		else:
 			await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 		await message.delete()
