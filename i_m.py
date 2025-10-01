@@ -55,6 +55,9 @@ from stem.connection import AuthenticationFailure
 
 # --- Настройка логирования ---
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(message)s', level=logging.INFO)
+# Устанавливаем более высокий уровень логирования для stem, чтобы убрать "шум"
+# про SocketClosed, который является нормальным поведением при закрытии соединения.
+logging.getLogger('stem').setLevel(logging.WARNING)
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
@@ -976,12 +979,18 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 				'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
 			}
 			async with aiohttp.ClientSession(headers=headers) as session:
-				async with session.get(url, allow_redirects=True, timeout=10) as response:
-					if response.status == 200:
-						return str(response.url)
-					else:
+				try:
+					async with session.get(url, allow_redirects=True, timeout=10) as response:
+						if response.status == 200:
+							# Проблема была здесь: str(response.url) возвращал URL со всеми UTM-метками.
+							# Теперь мы очищаем URL, оставляя только базовый путь до трека.
+							final_url = str(response.url)
+							return final_url.split('?')[0]
 						return None
-		return url
+				except Exception as e:
+					logging.error(f"Ошибка при раскрытии ссылки Звук {url}: {e}")
+					return None
+		return url.split('?')[0] # Также очищаем обычные ссылки от параметров
 
 	# 1. Получаем финальную ссылку (раскрываем короткую при необходимости)
 	original_url = message.text
@@ -991,17 +1000,14 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 		return
 
 	# 2. Извлекаем track_id из финальной ссылки
-	track_id = None
 	match = re.search(r'zvuk\.com/track/(\d+)', final_url)
-	if match:
-		track_id = match.group(1)
-
-	if not track_id:
-		# Если не удалось распарсить, пробуем взять ID от AI как запасной вариант
-		track_id = content.get('track_id')
-		if not track_id:
-			await p_msg.edit_text("❌ Не удалось извлечь ID трека из ссылки Звук.")
-			return
+	if not match:
+		# Если регулярное выражение не нашло ID, значит ссылка некорректна.
+		# ID от AI для коротких ссылок (типа '179nv4ai') не является числовым ID трека,
+		# поэтому мы его игнорируем и сообщаем об ошибке.
+		logging.error(f"Не удалось извлечь числовой ID трека из финальной ссылки Звук: {final_url}")
+		await p_msg.edit_text("❌ Не удалось извлечь ID трека из ссылки Звук.")
+		return
 
 	# 3. Получаем временный токен и инфу о треке
 	headers = {
@@ -1091,7 +1097,7 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 		else:
 			await message.answer(info_caption, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
 		await message.delete()
-		song_obj = {'song': f"{music_info['artist']} - {music_info['title']}", 'duration': music_info['duration_sec']}
+		song_obj = {'song': f"{music_info.get('artist')} - {music_info.get('title')}", 'duration': music_info.get('duration_sec')}
 		await handle_song_search(message, song_obj)
 	else:
 		await p_msg.edit_text("❌ Не удалось получить информацию о треке из Звук.")
@@ -1230,31 +1236,37 @@ def _extractor_mp3party(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 
 def _extractor_muzyet(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 	"""Извлекает данные для сайта muzyet.com."""
-	artist_el = item.select_one('.track__artist-name')
-	title_el = item.select_one('.track__title')
-	duration_el = item.select_one('.track__duration')
-	link_el = item.select_one('.track__download-btn')
+	# Новая структура на moc.muzyet.com
+	artist_title_el = item.select_one('.artist_name')
+	duration_el = item.select_one('.sure')
+	link_el = item.select_one('.downloadbtn')
 
-	if not all([artist_el, title_el, duration_el, link_el]):
+	if not all([artist_title_el, duration_el, link_el]):
 		return None
 
-	# Ссылка на скачивание относительная, поэтому добавляем базовый URL
-	download_link = base_url + link_el.get('href')
+	full_title = artist_title_el.text.strip()
+	artist, title = (full_title.split(' - ', 1) + [full_title])[:2]
 
 	return {
-		"link": download_link,
-		"artist": artist_el.text.strip(),
-		"title": title_el.text.strip(),
+		"link": base_url + link_el.get('href'),
+		"artist": artist.strip(),
+		"title": title.strip(),
 		"duration": _parse_duration_mm_ss(duration_el.text)
 	}
 
 def _extractor_skysound(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 	"""Извлекает данные для сайта skysound7.com."""
+	# Новая структура
+	link_el = item.select_one('.__adv_stream')
+	artist_el = item.select_one('.__adv_artist')
+	title_el = item.select_one('.__adv_name em')
+	duration_el = item.select_one('.__adv_duration')
+	if not all([link_el, artist_el, title_el, duration_el]): return None
 	return {
-		"link": item.get('data-url'),
-		"artist": item.get('data-artist'),
-		"title": item.get('data-title'),
-		"duration": int(item.get('data-duration', 0))
+		"link": link_el.get('data-url'),
+		"artist": artist_el.text.strip(),
+		"title": title_el.text.strip(),
+		"duration": _parse_duration_mm_ss(duration_el.text.strip())
 	}
 
 async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
@@ -1313,8 +1325,8 @@ BASE_HEADERS = {
 SEARCH_PROVIDER_CONFIGS = [
 	{
 		"name": "muzika.fun",
-		"base_url": "https://w1.muzika.fun",
-		"search_path": "/search/{query}",
+		"base_url": "https://w1.muzika.fun", # URL остался прежним
+		"search_path": "/poisk/{query}", # Путь поиска изменился
 		"item_selector": "ul.mainSongs li",
 		"extractor_func": _extractor_muzika_fun,
 		"headers": BASE_HEADERS,
@@ -1338,17 +1350,17 @@ SEARCH_PROVIDER_CONFIGS = [
 	},
 	{
 		"name": "muzyet.com",
-		"base_url": "https://muzyet.com",
-		"search_path": "/search?q={query}",
-		"item_selector": "div.track",
+		"base_url": "https://moc.muzyet.com", # Домен изменился
+		"search_path": "/search/{query}", # Путь изменился, и запрос форматируется по-другому
+		"item_selector": "div.song_list item", # Селектор изменился
 		"extractor_func": _extractor_muzyet,
 		"headers": BASE_HEADERS,
 	},
 	{
 		"name": "skysound7.com",
-		"base_url": "https://skysound7.com",
-		"search_path": "/search?query={query}",
-		"item_selector": "div.track",
+		"base_url": "https://xn-----7kcokpnbhpcaied7bzh1a0d.skysound7.com", # Punycode домен
+		"search_path": "/search?query={query}", # Путь остался прежним
+		"item_selector": "li.__adv_list_track", # Селектор изменился
 		"extractor_func": _extractor_skysound,
 		"headers": BASE_HEADERS,
 	},
