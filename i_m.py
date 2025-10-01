@@ -522,7 +522,8 @@ def get_instagram_client(user_id: str, session_data: dict | None = None, usernam
 	if session_data:
 		cl = Client()
 		cl.delay_range = [2, 4]
-		proxy = await get_proxy("instagram")
+		# Запускаем асинхронную функцию get_proxy из синхронного контекста
+		proxy = asyncio.run(get_proxy("instagram"))
 		if proxy: cl.set_proxy(proxy)
 		try:
 			cl.set_settings(session_data)
@@ -536,7 +537,8 @@ def get_instagram_client(user_id: str, session_data: dict | None = None, usernam
 	if not new_client and username and password:
 		cl = Client()
 		cl.delay_range = [2, 6]
-		proxy = await get_proxy("instagram")
+		# Запускаем асинхронную функцию get_proxy из синхронного контекста
+		proxy = asyncio.run(get_proxy("instagram"))
 		if proxy: cl.set_proxy(proxy)
 		try:
 			cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
