@@ -346,10 +346,21 @@ async def ai_router_handler(message: Message):
 
     try:
         user_queues[queue_key].put_nowait(message)
-        await message.reply("⏳ Ваш запрос добавлен в очередь...")
+        reply_msg = await message.reply("⏳ Ваш запрос добавлен в очередь...")
+        # Создаем фоновую задачу для удаления этого сообщения через 3 секунды
+        asyncio.create_task(delete_message_after_delay(reply_msg, 3))
     except asyncio.QueueFull:
         await message.reply("⌛️ Очередь запросов переполнена. Пожалуйста, повторите попытку позже.")
         logging.warning(f"Очередь запросов для '{queue_key}' переполнена. Новый запрос отброшен.")
+
+async def delete_message_after_delay(message: Message, delay: int):
+    """Удаляет сообщение после указанной задержки."""
+    await asyncio.sleep(delay)
+    try:
+        await message.delete()
+    except TelegramAPIError as e:
+        # Сообщение могло быть уже удалено вручную или другим процессом
+        logging.warning(f"Не удалось удалить сообщение {message.message_id}: {e}")
 
 async def process_request_queue(queue_key: str):
     """Обрабатывает очередь запросов для конкретного ключа (user_id или 'guest')."""
@@ -970,7 +981,7 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 	"""Обрабатывает ссылки на треки из Звук (zvuk.com), включая короткие share.zvuk.com."""
 	p_msg = await message.reply("🎶 Ищем трек в Звук...")
 
-	async def resolve_zvuk_url(url):
+	async def get_track_id_from_url(url: str) -> Optional[str]:
 		"""Если ссылка короткая, раскрывает её, иначе возвращает как есть."""
 		if "share.zvuk.com" in url:
 			headers = {
@@ -980,54 +991,60 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 			}
 			async with aiohttp.ClientSession(headers=headers) as session:
 				try:
-					async with session.get(url, allow_redirects=True, timeout=10) as response:
-						if response.status == 200:
-							# Проблема была здесь: str(response.url) возвращал URL со всеми UTM-метками.
-							# Теперь мы очищаем URL, оставляя только базовый путь до трека.
-							final_url = str(response.url)
-							return final_url.split('?')[0]
+					# Запрещаем автоматический редирект, чтобы вручную обработать Location.
+					# Это обходит ошибку 'Header value is too long' в aiohttp.
+					async with session.get(url, allow_redirects=False, timeout=10) as response:
+						# Ожидаем статус 301 или 302, который указывает на редирект.
+						if response.status in (301, 302, 307, 308):
+							location = response.headers.get('Location')
+							if location:
+								# Сразу извлекаем ID из URL редиректа
+								match = re.search(r'zvuk\.com/track/(\d+)', location)
+								if match:
+									return match.group(1)
+						logging.error(f"Не удалось извлечь ID из редиректа Звук {url}. Статус: {response.status}")
 						return None
 				except Exception as e:
 					logging.error(f"Ошибка при раскрытии ссылки Звук {url}: {e}")
 					return None
-		return url.split('?')[0] # Также очищаем обычные ссылки от параметров
+		# Для обычных ссылок
+		match = re.search(r'zvuk\.com/track/(\d+)', url)
+		return match.group(1) if match else None
 
-	# 1. Получаем финальную ссылку (раскрываем короткую при необходимости)
+	# 1. Получаем ID трека из ссылки
 	original_url = message.text
-	final_url = await resolve_zvuk_url(original_url)
-	if not final_url:
-		await p_msg.edit_text("❌ Не удалось раскрыть короткую ссылку Звук.")
-		return
-
-	# 2. Извлекаем track_id из финальной ссылки
-	match = re.search(r'zvuk\.com/track/(\d+)', final_url)
-	if not match:
-		# Если регулярное выражение не нашло ID, значит ссылка некорректна.
-		# ID от AI для коротких ссылок (типа '179nv4ai') не является числовым ID трека,
-		# поэтому мы его игнорируем и сообщаем об ошибке.
-		logging.error(f"Не удалось извлечь числовой ID трека из финальной ссылки Звук: {final_url}")
+	track_id = await get_track_id_from_url(original_url)
+	if not track_id:
 		await p_msg.edit_text("❌ Не удалось извлечь ID трека из ссылки Звук.")
 		return
 
-	# 3. Получаем временный токен и инфу о треке
+	# 2. Получаем временный токен и инфу о треке
 	headers = {
 		'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
 		'Accept': 'application/json, text/plain, */*',
 		'Origin': 'https://zvuk.com',
 	}
 	music_info = None
+	# Вы правы, токен необходим. Возвращаем логику его получения.
 	try:
-		async with aiohttp.ClientSession() as session:
+		async with aiohttp.ClientSession(headers=headers) as session:
+			# Шаг 2.1: Получаем временный токен
 			async with session.get("https://zvuk.com/api/tiny/profile", headers=headers, timeout=10) as resp:
 				if resp.status != 200:
 					await p_msg.edit_text("❌ Не удалось получить временный токен от Звук.")
 					return
 				data = await resp.json(content_type=None)
 				token = data.get("result", {}).get("token")
+
 			if not token:
 				await p_msg.edit_text("❌ Временный токен от Звук пуст.")
 				return
+			
+			# Добавляем полученный токен в заголовки для следующего запроса
+			graphql_headers = headers.copy()
+			graphql_headers["x-auth-token"] = token
 
+			# Шаг 2.2: Запрашиваем информацию о треке с токеном
 			payload = {
 				"operationName": "getFullTrack",
 				"variables": {"id": track_id},
@@ -1045,12 +1062,6 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 					  }
 					}
 				"""
-			}
-			graphql_headers = {
-				"User-Agent": headers["User-Agent"],
-				"Accept": headers["Accept"],
-				"Origin": headers["Origin"],
-				"x-auth-token": token
 			}
 			async with session.post("https://zvuk.com/api/v1/graphql", json=payload, headers=graphql_headers, timeout=10) as resp:
 				if resp.status == 200:
@@ -1271,7 +1282,15 @@ def _extractor_skysound(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 
 async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	"""Универсальный парсер музыкальных сайтов, управляемый конфигурацией."""
-	search_url = config["base_url"] + config["search_path"].format(query=quote(song_name))
+	# Специальная обработка для skysound, где запрос - это поддомен
+	if config["name"] == "skysound7.com":
+		# Кодируем запрос в punycode и формируем URL
+		encoded_query = song_name.encode('idna').decode('ascii')
+		search_url = config["base_url"].format(query_subdomain=encoded_query)
+	else:
+		# Стандартная логика для остальных сайтов
+		search_url = config["base_url"] + config["search_path"].format(query=quote(song_name))
+
 	
 	session_args = {"headers": config.get("headers", {})}
 	
@@ -1326,10 +1345,11 @@ SEARCH_PROVIDER_CONFIGS = [
 	{
 		"name": "muzika.fun",
 		"base_url": "https://w1.muzika.fun", # URL остался прежним
-		"search_path": "/poisk/{query}", # Путь поиска изменился
+		"search_path": "/poisk/{query}",
 		"item_selector": "ul.mainSongs li",
 		"extractor_func": _extractor_muzika_fun,
-		"headers": BASE_HEADERS,
+		# Добавляем Referer, чтобы обойти ошибку 403 Forbidden
+		"headers": {**BASE_HEADERS, "Referer": "https://w1.muzika.fun/"},
 	},
 	{
 		"name": "mp3iq.net",
@@ -1358,11 +1378,12 @@ SEARCH_PROVIDER_CONFIGS = [
 	},
 	{
 		"name": "skysound7.com",
-		"base_url": "https://xn-----7kcokpnbhpcaied7bzh1a0d.skysound7.com", # Punycode домен
-		"search_path": "/search?query={query}", # Путь остался прежним
+		# URL теперь является шаблоном, куда будет подставлен punycode-запрос
+		"base_url": "https://{query_subdomain}.skysound7.com",
+		"search_path": "/", # Путь не используется, но оставляем для консистентности
 		"item_selector": "li.__adv_list_track", # Селектор изменился
 		"extractor_func": _extractor_skysound,
-		"headers": BASE_HEADERS,
+		"headers": BASE_HEADERS, # Referer здесь не нужен, так как домен всегда разный
 	},
 ]
 
