@@ -131,6 +131,17 @@ if os.getenv("DEBUG_MODE") == "1":
 bot = Bot(token=BOT_TOKEN) #,session=my_custom_session
 dp = Dispatcher()
 
+# --- Новые глобальные переменные для управления очередью ---
+# Словарь для хранения очередей пользователей {queue_key: asyncio.Queue}
+# Для админов queue_key = user_id, для остальных - 'guest'
+user_queues = {}
+# Словарь для хранения времени последнего запроса для каждой очереди {queue_key: float}
+last_request_times = {}
+# Словарь для хранения задач-обработчиков для каждой очереди {queue_key: asyncio.Task}
+queue_processors = {}
+# Блокировка для синхронизации доступа к словарям
+queues_lock = asyncio.Lock()
+
 # --- Глобальный кэш для клиентов Instagrapi ---
 # Используем потокобезопасную блокировку, так как доступ к кэшу будет из разных потоков
 INSTA_CLIENTS_CACHE = {}
@@ -151,10 +162,12 @@ Follow these rules for classification:
 1.  **Type: "song"**
 	*   If the message appears to be a song title and/or artist name (even with typos or incomplete).
 	*   The "content" should be a JSON object: {{"song": "Corrected Artist - Corrected Title", "duration": DURATION_IN_SECONDS}}.
-	*   Use your knowledge and the provided search tool to find the correct artist, title, and duration in seconds.
+	*   Use your knowledge and the provided search tool to find the correct artist, title, and duration.
+	*   **CRITICAL RULE:** If an artist is specified in the user's query, you MUST prioritize finding a song by that artist. Do not substitute it with a more famous song by a different artist, even if the title is the same.
 	*   If duration is unknown, use 0.
-	*   Example: for "Заточка - мкжик", you should return a "song" type with content like {{"song": "Заточка - Последний нормальный мужик", "duration": 266}}.
-
+	*   Example 1 (Correction): for "Заточка - мкжик", return {{"song": "Заточка - Последний нормальный мужик", "duration": 266}}.
+	*   Example 2 (Prioritizing Artist): for "Джон Шансон - Кольщик", you MUST return a result for "Джон Шансон", not for "Михаил Круг". A correct response would be {{"song": "Джон Шансон - Кольщик", "duration": 195}}.
+ 
 2.  **Type: "instagram_link"**
 	*   If the message is a valid Instagram post link (e.g., `https://www.instagram.com/p/ABC123/`).
 	*   The "content" should be a JSON object: {{"shortcode": "SHORTCODE"}}.
@@ -200,7 +213,6 @@ The user's message will be provided as the main content to process. Analyze it a
 		# Ловим любые другие неожиданные ошибки при запросе к Gemini API.
 		logging.error(f"Ошибка классификации AI Gemini (общая): {e}")
 		return {"type": "chat", "content": text}
-
 
 def parse_gemini_json_response(raw_text: str, original_input_text: str) -> dict:
 	"""
@@ -315,16 +327,64 @@ async def command_start_handler(message: Message):
 
 @dp.message(F.text, ~F.text.startswith('/'))
 async def ai_router_handler(message: Message):
-	processing_msg = await message.reply("🤔 Думаю...")
-	classification = await classify_message_with_ai(message.text)
-	await processing_msg.delete()
-	intent_type, content = classification.get("type"), classification.get("content")
-	if intent_type == "instagram_link": await handle_instagram_link(message, content)
-	elif intent_type == "yandex_music_link": await handle_yandex_music(message, content)
-	elif intent_type == "song": await handle_song_search(message, content)
-	elif intent_type == "sberzvuk_link": await handle_sberzvuk_music(message, content)
-	elif intent_type == "mts_music_link": await handle_mts_music(message, content)
-	else: await handle_chat_request(message, message.text)
+    user_id = str(message.from_user.id)
+    
+    # Админы получают персональную очередь, остальные - общую
+    queue_key = user_id if user_id in TG_IDS else 'guest'
+
+    async with queues_lock:
+        if queue_key not in user_queues:
+            user_queues[queue_key] = asyncio.Queue(maxsize=10)
+            last_request_times[queue_key] = time.monotonic()
+            # Создаем и запускаем обработчик для новой очереди
+            processor_task = asyncio.create_task(process_request_queue(queue_key))
+            queue_processors[queue_key] = processor_task
+            logging.info(f"Создана новая очередь и обработчик для '{queue_key}'")
+
+    try:
+        user_queues[queue_key].put_nowait(message)
+        await message.reply("⏳ Ваш запрос добавлен в очередь...")
+    except asyncio.QueueFull:
+        await message.reply("⌛️ Очередь запросов переполнена. Пожалуйста, повторите попытку позже.")
+        logging.warning(f"Очередь запросов для '{queue_key}' переполнена. Новый запрос отброшен.")
+
+async def process_request_queue(queue_key: str):
+    """Обрабатывает очередь запросов для конкретного ключа (user_id или 'guest')."""
+    logging.info(f"Запущен обработчик очереди для ключа: {queue_key}")
+    while True:
+        try:
+            message = await user_queues[queue_key].get()
+
+            # --- Логика ожидания 5 секунд ---
+            current_time = time.monotonic()
+            time_since_last_request = current_time - last_request_times[queue_key]
+            if time_since_last_request < 5:
+                await asyncio.sleep(5 - time_since_last_request)
+            
+            # --- Обработка запроса ---
+            try:
+                processing_msg = await message.reply("🤔 Думаю...")
+                classification = await classify_message_with_ai(message.text)
+                await processing_msg.delete()
+                intent_type, content = classification.get("type"), classification.get("content")
+
+                if intent_type == "instagram_link": await handle_instagram_link(message, content)
+                elif intent_type == "yandex_music_link": await handle_yandex_music(message, content)
+                elif intent_type == "song": await handle_song_search(message, content)
+                elif intent_type == "sberzvuk_link": await handle_sberzvuk_music(message, content)
+                elif intent_type == "mts_music_link": await handle_mts_music(message, content)
+                else: await handle_chat_request(message, message.text)
+
+            except Exception as e:
+                logging.error(f"Ошибка при обработке запроса из очереди для '{queue_key}': {e}")
+                await message.reply("Произошла ошибка при обработке вашего запроса.")
+            finally:
+                last_request_times[queue_key] = time.monotonic()
+                user_queues[queue_key].task_done()
+        except Exception as e:
+            logging.error(f"Критическая ошибка в обработчике очереди '{queue_key}': {e}.")
+            # Пауза перед следующей попыткой, чтобы избежать бесконечного цикла ошибок
+            await asyncio.sleep(5)
 
 
 # --- Настройки Instagrapi ---
@@ -1168,6 +1228,35 @@ def _extractor_mp3party(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 		"duration": _parse_duration_mm_ss(duration_div.text)
 	}
 
+def _extractor_muzyet(item: BeautifulSoup, base_url: str) -> Optional[dict]:
+	"""Извлекает данные для сайта muzyet.com."""
+	artist_el = item.select_one('.track__artist-name')
+	title_el = item.select_one('.track__title')
+	duration_el = item.select_one('.track__duration')
+	link_el = item.select_one('.track__download-btn')
+
+	if not all([artist_el, title_el, duration_el, link_el]):
+		return None
+
+	# Ссылка на скачивание относительная, поэтому добавляем базовый URL
+	download_link = base_url + link_el.get('href')
+
+	return {
+		"link": download_link,
+		"artist": artist_el.text.strip(),
+		"title": title_el.text.strip(),
+		"duration": _parse_duration_mm_ss(duration_el.text)
+	}
+
+def _extractor_skysound(item: BeautifulSoup, base_url: str) -> Optional[dict]:
+	"""Извлекает данные для сайта skysound7.com."""
+	return {
+		"link": item.get('data-url'),
+		"artist": item.get('data-artist'),
+		"title": item.get('data-title'),
+		"duration": int(item.get('data-duration', 0))
+	}
+
 async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	"""Универсальный парсер музыкальных сайтов, управляемый конфигурацией."""
 	search_url = config["base_url"] + config["search_path"].format(query=quote(song_name))
@@ -1246,6 +1335,22 @@ SEARCH_PROVIDER_CONFIGS = [
 		"item_selector": "div.track.song-item",
 		"extractor_func": _extractor_mp3party,
 		"headers": {**BASE_HEADERS, "Referer": "https://mp3party.net/"},
+	},
+	{
+		"name": "muzyet.com",
+		"base_url": "https://muzyet.com",
+		"search_path": "/search?q={query}",
+		"item_selector": "div.track",
+		"extractor_func": _extractor_muzyet,
+		"headers": BASE_HEADERS,
+	},
+	{
+		"name": "skysound7.com",
+		"base_url": "https://skysound7.com",
+		"search_path": "/search?query={query}",
+		"item_selector": "div.track",
+		"extractor_func": _extractor_skysound,
+		"headers": BASE_HEADERS,
 	},
 ]
 
