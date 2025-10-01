@@ -72,6 +72,7 @@ if not GOOGLE_API_KEY: exit("GOOGLE_API_KEY is not set")
 client = genai.Client() # the API is automatically loaded from the environement variable
 MODEL_20 = "gemini-2.0-flash"
 MODEL_25 = "gemini-2.5-flash"
+MODEL_L = "gemini-flash-latest" # Альтернативная модель, если нужна большая контекстная память
 
 # --- Webhook settings ---
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
@@ -156,50 +157,78 @@ async def classify_message_with_ai(text: str) -> dict:
 	# Он теперь представляет собой чистую "системную инструкцию" для модели Gemini.
 	# f-строка используется для удобного встраивания примеров JSON.
 	# Внешние {} - для f-строки, сдвоенные внутренние {{}} - для литеральных скобок в итоговой строке.
-	prompt = f'''You are a message classifier for a music bot. Your task is to analyze the user's message and return a single, valid JSON object with two keys: "type" and "content". Do not add any other text, just the JSON.
+	prompt = f'''### **Оптимизированный промпт для ИИ**
 
-The possible values for "type" are: "song", "instagram_link", "yandex_music_link", "sberzvuk_link", "mts_music_link", or "chat".
+**## 1. Основная задача и роль**
+Твоя роль — высокоточный классификатор сообщений для музыкального бота. Твоя единственная задача — проанализировать входящее сообщение и вернуть **один валидный JSON-объект** без каких-либо дополнительных пояснений или текста.
 
-Follow these rules for classification:
+**## 2. Формат вывода**
+Ответ всегда должен быть JSON-объектом со строго двумя ключами: `type` и `content`.
+```json
+{{
+  "type": "ТИП_СООБЩЕНИЯ",
+  "content": "ДАННЫЕ"
+}}
+```
 
-1.  **Type: "song"**
-	*   If the message appears to be a song title and/or artist name (even with typos or incomplete).
-	*   The "content" should be a JSON object: {{"song": "Corrected Artist - Corrected Title", "duration": DURATION_IN_SECONDS}}.
-	*   Use your knowledge and the provided search tool to find the correct artist, title, and duration.
-	*   **CRITICAL RULE:** If an artist is specified in the user's query, you MUST prioritize finding a song by that artist. Do not substitute it with a more famous song by a different artist, even if the title is the same.
-	*   If duration is unknown, use 0.
-	*   Example 1 (Correction): for "Заточка - мкжик", return {{"song": "Заточка - Последний нормальный мужик", "duration": 266}}.
-	*   Example 2 (Prioritizing Artist): for "Джон Шансон - Кольщик", you MUST return a result for "Джон Шансон", not for "Михаил Круг". A correct response would be {{"song": "Джон Шансон - Кольщик", "duration": 195}}.
- 
-2.  **Type: "instagram_link"**
-	*   If the message is a valid Instagram post link (e.g., `https://www.instagram.com/p/ABC123/`).
-	*   The "content" should be a JSON object: {{"shortcode": "SHORTCODE"}}.
-	*   Example: for `https://www.instagram.com/p/Cxyz123/`, the shortcode is `Cxyz123`.
+**## 3. Ключевые принципы и порядок анализа**
+Всегда следуй этому порядку приоритетов при анализе:
 
-3.  **Type: "yandex_music_link"**
-	*   If the message is a Yandex Music track link (e.g., `https://music.yandex.com/album/123/track/456`).
-	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-	*   Example: for the link above, the track_id is `456`.
+1.  **Проверка на ссылку Instagram.**
+2.  **Проверка на ссылку музыкального сервиса.**
+3.  **Анализ на предмет названия песни/исполнителя.**
+4.  **Если ничего не подошло — это `chat`**.
 
-4.  **Type: "sberzvuk_link"**
-	*   If the message is a SberZvuk (zvuk.com) track link (e.g., `https://zvuk.com/track/123`).
-	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-	*   Example: for the link above, the track_id is `123`.
+**Принцип безопасного ответа:** Если ты не уверен или данные некорректны (например, поиск не дал результатов), всегда выбирай самый безопасный тип — `chat`.
 
-5.  **Type: "mts_music_link"**
-	*   If the message is an MTS Music track link (e.g., `https://music.mts.ru/track/789`).
-	*   The "content" should be a JSON object: {{"track_id": "TRACK_ID"}}.
-	*   Example: for the link above, the track_id is `789`.
+**## 4. Детальные правила классификации**
 
-6.  **Type: "chat"**
-	*   If the message does not match any of the types above, classify it as "chat".
-	*   The "content" should be the original user message as a string.
+### **Тип: `instagram_link`**
+*   **Условие:** Сообщение — это валидная ссылка на пост в Instagram (содержит `instagram.com/p/` или `instagram.com/reel/`).
+*   **`content`:** Объект с ключом `shortcode` (уникальный код из URL).
+*   **Пример:**
+    *   **Вход:** `https://www.instagram.com/p/Cxyz123/`
+    *   **Выход:** `{{ "type": "instagram_link", "content": {{ "shortcode": "Cxyz123" }} }}`
 
-The user's message will be provided as the main content to process. Analyze it and return only the JSON object.
-'''
+### **Тип: `music_service_link`**
+*   **Условие:** Сообщение — это ссылка на **трек** одного из сервисов:
+    *   `music.yandex.com/.../track/...`
+    *   `zvuk.com/track/...`
+    *   `music.mts.ru/track/...`
+    *   `vk.com/music/track/...`
+*   **Действия:**
+    1.  Определи сервис по домену.
+    2.  Извлеки уникальный ID трека.
+    3.  Если ссылка ведет на альбом, плейлист или страницу артиста, а не на конкретный трек, классифицируй ее как `chat`.
+*   **`content`:** Объект с ключами `service` (название в нижнем регистре: `yandex`, `sberzvuk`, `mts`, `vk`) и `track_id`.
+*   **Примеры:**
+    *   **Вход:** `https://vk.com/music/track/505362945_456241371`
+    *   **Выход:** `{{ "type": "music_service_link", "content": {{ "service": "vk", "track_id": "505362945_456241371" }} }}`
+    *   **Вход:** `https://music.yandex.com/album/123` (не трек)
+    *   **Выход:** `{{ "type": "chat", "content": "https://music.yandex.com/album/123" }}`
+### **Тип: `song`**
+*   **Условие:** Сообщение не является ссылкой, но содержит текст, похожий на название песни и/или имя исполнителя.
+*   **Действия:**
+    1.  Используй поиск, чтобы найти наиболее релевантный трек, исправив возможные опечатки.
+    2.  Определи корректное название, исполнителя и длительность в секундах.
+    3.  **Если поиск не дал уверенных результатов**, классифицируй сообщение как `chat`.
+    4.  Если длительность неизвестна, используй `0`.
+*   **`content`:** Объект с ключами `song` и `duration`.
+*   **Примеры:**
+    *   **Вход:** "Включи дайте танк башмаки"
+    *   **Выход:** `{{ "type": "song", "content": {{ "song": "Дайте танк (!) - Башмаки", "duration": 154 }} }}`
+    *   **Вход:** "абыдлыоаоыдл" (поиск не дал результатов)
+    *   **Выход:** `{{ "type": "chat", "content": "абыдлыоаоыдл" }}`
+
+### **Тип: `chat`**
+*   **Условие:** Сообщение не соответствует ни одному из вышеперечисленных правил.
+*   **`content`:** Исходная строка сообщения пользователя без изменений.
+*   **Пример:**
+    *   **Вход:** "Привет бот! Как настроение?"
+    *   **Выход:** `{{ "type": "chat", "content": "Привет бот! Как настроение?" }}`'''
 	try:
 		response = await client.aio.models.generate_content(
-			model=MODEL_20,			
+			model=MODEL_L,
 			contents=text,
 			config=GenerateContentConfig(
 				tools=[Tool(googleSearch=GoogleSearch()),],
@@ -390,13 +419,15 @@ async def process_request_queue(queue_key: str):
                 classification = await classify_message_with_ai(message.text)
                 await processing_msg.delete()
                 intent_type, content = classification.get("type"), classification.get("content")
-
-                if intent_type == "instagram_link": await handle_instagram_link(message, content)
-                elif intent_type == "yandex_music_link": await handle_yandex_music(message, content)
-                elif intent_type == "song": await handle_song_search(message, content)
-                elif intent_type == "sberzvuk_link": await handle_sberzvuk_music(message, content)
-                elif intent_type == "mts_music_link": await handle_mts_music(message, content)
-                else: await handle_chat_request(message, message.text)
+                
+                # Унифицированная маршрутизация
+                handlers = {
+                    "instagram_link": handle_instagram_link,
+                    "music_service_link": handle_music_service_link, # Новый единый обработчик
+                    "song": handle_song_search,
+                }
+                handler = handlers.get(intent_type, lambda msg, _: handle_chat_request(msg, msg.text))
+                await handler(message, content)
 
             except Exception as e:
                 logging.error(f"Ошибка при обработке запроса из очереди для '{queue_key}': {e}")
@@ -868,6 +899,27 @@ async def handle_instagram_link(message: Message, content: dict): # url тепе
 	except Exception as e:
 		logging.error(f"Неизвестная ошибка скачивания: {e}")
 		await p_msg.edit_text(f"❌ **Произошла неизвестная ошибка:**\n`{e}`")
+
+# --- ЕДИНЫЙ ОБРАБОТЧИК ССЫЛОК НА МУЗЫКАЛЬНЫЕ СЕРВИСЫ ---
+async def handle_music_service_link(message: Message, content: dict):
+    """
+    Единый обработчик, который вызывает соответствующую функцию
+    в зависимости от сервиса, определённого AI.
+    """
+    service = content.get("service")
+    
+    service_handlers = {
+        "yandex": handle_yandex_music,
+        "sberzvuk": handle_sberzvuk_music,
+        "mts": handle_mts_music,
+    }
+
+    handler = service_handlers.get(service)
+    if handler:
+        await handler(message, content)
+    else:
+        logging.warning(f"Получен неизвестный музыкальный сервис '{service}' от AI.")
+        await message.reply(f"❌ Неизвестный музыкальный сервис: {service}")
 
 # Муз сервисы
 async def handle_yandex_music(message: Message, content: dict):
@@ -1343,6 +1395,7 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	# Проверяем, нужен ли прокси для этого сайта
 	proxy_type = config.get("proxy")
 	if proxy_type:
+		logging.info(f"Для сайта {config['name']} требуется прокси типа '{proxy_type}'.")
 		proxy_url = get_proxy(proxy_type)
 		if not proxy_url:
 			# Если для сайта требуется прокси, но он недоступен, немедленно прекращаем работу.
@@ -1353,36 +1406,448 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 		connector = ProxyConnector.from_url(proxy_url)
 		session_args["connector"] = connector
 
-	try:
-		# Специальная обработка для muzika.fun, которая требует сохранения Referer при редиректе
-		# и замены дефиса на пробел в запросе.
-		if config["name"] == "muzika.fun" and ' - ' in song_name:
-			# Сайт ожидает пробел вместо дефиса между исполнителем и названием
-			modified_song_name = song_name.replace(' - ', ' ', 1)
-			search_url = config["base_url"] + config["search_path"].format(query=quote(modified_song_name))
+	# --- Логика запроса с ретраями для Tor ---
+	max_retries = 3 if proxy_type == "tor" else 1
+	soup = None
+	for attempt in range(max_retries):
+		try:
+			async with aiohttp.ClientSession(**session_args) as session:
+				# Для muzika.fun нужна ручная обработка редиректа
+				if config["name"] == "muzika.fun":
+					async with session.get(search_url, timeout=15, allow_redirects=False) as response:
+						if response.status in (301, 302, 307, 308) and 'Location' in response.headers:
+							redirect_url = response.headers['Location']
+							if redirect_url.startswith('/'):
+								redirect_url = config['base_url'] + redirect_url
+							logging.info(f"muzika.fun редирект на: {redirect_url}")
+							async with session.get(redirect_url, timeout=15) as final_response:
+								if final_response.status == 200:
+									soup = BeautifulSoup(await final_response.text(), 'html.parser')
+								else:
+									logging.error(f"Ошибка HTTP {final_response.status} при запросе {redirect_url}")
+						elif response.status == 200:
+							soup = BeautifulSoup(await response.text(), 'html.parser')
+						else:
+							logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
+				else: # Стандартная логика для остальных сайтов
+					async with session.get(search_url, timeout=15) as response:
+						if response.status == 200:
+							soup = BeautifulSoup(await response.text(), 'html.parser')
+						else:
+							logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
+			
+			if soup:
+				break # Успех, выходим из цикла ретраев
 
-			async with aiohttp.ClientSession(**session_args) as session:
-				# Делаем первый запрос, не следуя редиректам
-				async with session.get(search_url, timeout=15, allow_redirects=False) as response:
-					# Если есть редирект (301, 302), переходим по новому URL, сохраняя заголовки
-					if response.status in (301, 302, 307, 308) and 'Location' in response.headers:
-						redirect_url = response.headers['Location']
-						# Убедимся, что URL полный
-						if redirect_url.startswith('/'):
-							redirect_url = config['base_url'] + redirect_url
-						logging.info(f"muzika.fun редирект на: {redirect_url}")
-						async with session.get(redirect_url, timeout=15) as final_response:
-							if final_response.status != 200:
-								logging.error(f"Ошибка HTTP {final_response.status} при запросе {redirect_url}")
-								return None
-							soup = BeautifulSoup(await final_response.text(), 'html.parser')
-					elif response.status == 200:
-						soup = BeautifulSoup(await response.text(), 'html.parser')
-					else:
-						logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
-						return None
-		else: # Стандартная логика для всех остальных сайтов
-			async with aiohttp.ClientSession(**session_args) as session:
+		except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
+			logging.error(f"Попытка {attempt + 1}/{max_retries}: Ошибка соединения при запросе {search_url}: {e}")
+		except Exception as e:
+			logging.error(f"Попытка {attempt + 1}/{max_retries}: Неожиданная ошибка при запросе {search_url}: {e}", exc_info=True)
+
+		# Если попытка не удалась и это был Tor, меняем IP
+		if attempt < max_retries - 1:
+			if proxy_type == "tor":
+				logging.info(f"Меняю IP Tor и жду...")
+				check_tor_connection(renew=True)
+				await asyncio.sleep(3)
+			else:
+				await asyncio.sleep(1) # Небольшая пауза для других типов ошибок
+
+	if not soup:
+		return None
+
+	parsed_songs = []
+	song_list = soup.select(config["item_selector"])
+	if not song_list:
+		logging.warning(f"Не найдены элементы песен на {search_url} по селектору '{config['item_selector']}'")
+		return None
+
+	for item in song_list:
+		try:
+			song_data = config["extractor_func"](item, config["base_url"])
+			if song_data and all(song_data.values()):
+				parsed_songs.append(song_data)
+		except Exception as e:
+			logging.warning(f"Не удалось распарсить элемент на {config['name']}: {e}")
+			continue
+	
+	return parsed_songs if parsed_songs else None
+
+BASE_HEADERS = {
+	"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+	"Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+	"Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7"
+}
+
+SEARCH_PROVIDER_CONFIGS = [
+	{
+		"name": "muzika.fun",
+		"base_url": "https://w1.muzika.fun", # URL остался прежним
+		"search_path": "/poisk/{query}",
+		"item_selector": "ul.mainSongs li",
+		"extractor_func": _extractor_muzika_fun,
+		# Добавляем Referer, чтобы обойти ошибку 403 Forbidden
+		"headers": {**BASE_HEADERS, "Referer": "https://w1.muzika.fun/"},
+		"proxy": "tor", # Добавляем Tor для обхода региональных блокировок
+	},
+	{
+		"name": "mp3iq.net",
+		"base_url": "https://mp3iq.net",
+		"search_path": "/search/f/{query}/",
+		"item_selector": "li.track",
+		"extractor_func": _extractor_mp3iq,
+		"headers": {**BASE_HEADERS, "Referer": "https://mp3iq.net/"},
+		"proxy": "tor", # Для этого сайта требуется Tor
+	},
+	{
+		"name": "mp3party.net",
+		"base_url": "https://mp3party.net",
+		"search_path": "/search?q={query}",
+		"item_selector": "div.track.song-item",
+		"extractor_func": _extractor_mp3party,
+		"headers": {**BASE_HEADERS, "Referer": "https://mp3party.net/"},
+	},
+	{
+		"name": "muzyet.com",
+		"base_url": "https://moc.muzyet.com", # Домен изменился
+		"search_path": "/search/{query}", # Путь изменился, и запрос форматируется по-другому
+		"item_selector": "div.song_list item", # Селектор изменился
+		"extractor_func": _extractor_muzyet,
+		"headers": BASE_HEADERS,
+	},
+	{
+		"name": "skysound7.com",
+		# URL теперь является шаблоном, куда будет подставлен punycode-запрос
+		"base_url": "https://{query_subdomain}.skysound7.com",
+		"search_path": "/", # Путь не используется, но оставляем для консистентности
+		"item_selector": "li.__adv_list_track", # Селектор изменился
+		"extractor_func": _extractor_skysound,
+		"headers": BASE_HEADERS,
+		"proxy": "russian", # Для этого сайта требуется российский прокси
+	},
+]
+
+def normalize_for_match(s: str) -> str:
+	"""Удаляет все, кроме букв и цифр, и приводит к нижнему регистру для сравнения."""
+	if not s: return ""
+	return re.sub(r'[^a-zа-я0-9]', '', s.lower())
+
+async def handle_song_search(message: Message, song_obj: dict):
+	"""
+	Обрабатывает запрос на поиск песни, используя несколько источников параллельно.
+	Приоритетно ищет точное совпадение и немедленно загружает его.
+	Если точных совпадений нет, собирает все частичные совпадения и предлагает пользователю выбор.
+	"""
+	song_name = song_obj.get('song')
+	duration = song_obj.get('duration') or 0
+	normalized_query = normalize_for_match(song_name)
+
+	status_msg = await message.answer(f"🎤 Ищу «{song_name}»...")
+
+	# Внутренняя функция для поиска и фильтрации на одном источнике
+	async def _search_and_filter_provider(provider_config: dict) -> tuple[list, list]:
+		"""Ищет песни на одном источнике и разделяет их на точные и частичные совпадения."""
+		all_found = await _parse_music_site(provider_config, song_name)
+		if not all_found:
+			return [], []
+
+		exact_matches = []
+		partial_matches = []
+		
+		for song in all_found:
+			full_title = f"{song.get('artist')} {song.get('title')}"
+			normalized_title = normalize_for_match(full_title)
+			
+			if normalized_title == normalized_query:
+				exact_matches.append(song)
+			elif normalized_query in normalized_title:
+				partial_matches.append(song)
+		
+		return exact_matches, partial_matches
+
+	# --- 1. Параллельный поиск с ранним выходом при точном совпадении ---
+	tasks = [asyncio.create_task(_search_and_filter_provider(provider)) for provider in SEARCH_PROVIDER_CONFIGS]
+	all_partial_songs = []
+	
+	# Используем asyncio.as_completed для обработки результатов по мере их поступления
+	for future in asyncio.as_completed(tasks):
+		try:
+			exact_matches, partial_matches = await future
+			all_partial_songs.extend(partial_matches) # Собираем частичные совпадения в любом случае
+
+			# Если найдены точные совпадения, выбираем лучшее и завершаем поиск
+			if exact_matches:
+				logging.info(f"Найдено точное совпадение. Начинаю загрузку.")
+				
+				# Если есть длительность, сортируем, чтобы найти наиболее близкий трек
+				if duration > 0:
+					exact_matches.sort(key=lambda s: abs(s.get('duration', 0) - duration))
+				
+				best_match = exact_matches[0]
+
+				await status_msg.edit_text(f"✅ Найдено точное совпадение, скачиваю...")
+				audio_data = await download_audio(best_match.get('link'))
+				if audio_data:
+					await message.answer_audio(
+						audio=BufferedInputFile(audio_data, filename=f"{best_match.get('artist')}-{best_match.get('title')}.mp3"),
+						performer=best_match.get('artist'),
+						title=best_match.get('title'),
+						duration=best_match.get('duration')
+					)
+					await status_msg.delete()
+				else:
+					await status_msg.edit_text("❌ Ошибка скачивания трека.")
+
+				# Отменяем оставшиеся задачи, так как мы нашли то, что искали
+				for task in tasks:
+					if not task.done():
+						task.cancel()
+				return # Выход из функции
+
+		except asyncio.CancelledError:
+			logging.info("Задача поиска отменена, так как точное совпадение уже найдено.")
+		except Exception as e:
+			logging.error(f"Ошибка при обработке результатов поиска: {e}", exc_info=True)
+
+	# --- 2. Обработка, если точных совпадений не найдено ни на одном источнике ---
+	if not all_partial_songs:
+		await status_msg.edit_text("❌ Ничего не найдено по вашему запросу.")
+		return
+
+	# Сортируем все собранные частичные совпадения по длительности
+	if duration > 0:
+		all_partial_songs.sort(key=lambda s: abs(s.get('duration', 0) - duration))
+
+	# Удаляем дубликаты из общего списка
+	unique_songs = []
+	seen = set()
+	for song in all_partial_songs:
+		# Используем нормализованные исполнителя и название для идентификации дубликатов
+		identifier = (normalize_for_match(song.get('artist')), normalize_for_match(song.get('title')))
+		if identifier not in seen:
+			unique_songs.append(song)
+			seen.add(identifier)
+	
+	logging.info(f"Точных совпадений не найдено. После дедупликации осталось {len(unique_songs)} треков для выбора.")
+
+	if unique_songs:
+		# --- Если найден всего 1 трек, сразу его загружаем ---
+		if len(unique_songs) == 1:
+			song = unique_songs[0]
+			await status_msg.edit_text(f"✅ Найден один подходящий трек, скачиваю...")
+			audio_data = await download_audio(song.get('link'))
+			if audio_data:
+				await message.answer_audio(audio=BufferedInputFile(audio_data, filename=f"{song.get('artist')}-{song.get('title')}.mp3"), performer=song.get('artist'), title=song.get('title'), duration=song.get('duration'))
+				await status_msg.delete()
+			else:
+				await status_msg.edit_text("❌ Ошибка скачивания трека.")
+			return
+
+		await status_msg.delete()
+		await display_music_list(message, unique_songs)
+	else:
+		await status_msg.edit_text("❌ Подходящих треков не найдено после фильтрации.")
+
+async def download_audio(url):
+	try:
+		async with aiohttp.ClientSession() as session:
+			async with session.get(url, timeout=10) as response:
+				if response.status != 200:
+					logging.error(f"Ошибка HTTP {response.status} при скачивании {url}")
+					return None
+				data = await response.read()
+				logging.info(f"Успешно скачан аудиофайл с {url}")
+				return data
+	except Exception as e:
+		logging.error(f"Ошибка скачивания аудио с {url}: {e}")
+		return None
+
+async def display_music_list(message: Message, list_music: list, items_per_page: int = 5):
+	user_id = str(message.from_user.id)
+	uid = uuid.uuid4().hex
+	state = {"list": list_music, "current_page": 0, "items_per_page": items_per_page}
+	await r.set(f"music_session:{user_id}:{uid}", json.dumps(state), ex=600)
+	num_pages = -(-len(list_music) // items_per_page)
+	keyboard = create_keyboard(list_music, 0, items_per_page, uid, num_pages)
+	text = f"Результаты поиска ({len(list_music)}). Выберите подходящий вариант:"
+	await message.answer(text, reply_markup=keyboard, parse_mode=ParseMode.HTML)
+
+def create_keyboard(list_music: list, page: int, items_per_page: int, uid: str, num_pages: int):
+	builder = InlineKeyboardBuilder()
+	start_idx, end_idx = page * items_per_page, min((page + 1) * items_per_page, len(list_music))
+	for idx in range(start_idx, end_idx):
+		song = list_music[idx]
+		minutes, seconds = divmod(song.get("duration", 0), 60)
+		builder.button(
+			text=f"🎧 {song.get('artist')} - {song.get('title')} ({minutes}:{seconds:02d})",
+			callback_data=f"select_song:{idx}:{uid}"
+		)
+	builder.adjust(1)
+	nav_buttons = []
+	if page > 0:
+		nav_buttons.append(types.InlineKeyboardButton(text="◀️ Назад", callback_data=f"prev_page:{uid}"))
+	nav_buttons.append(types.InlineKeyboardButton(text="❌ Отмена", callback_data=f"cancel:{uid}"))
+	if page < num_pages - 1:
+		nav_buttons.append(types.InlineKeyboardButton(text="Вперед ▶️", callback_data=f"next_page:{uid}"))
+	if nav_buttons:
+		builder.row(*nav_buttons)
+	return builder.as_markup()
+
+@dp.callback_query(F.data.startswith(("select_song", "prev_page", "next_page", "cancel")))
+async def handle_callback_query(callback: types.CallbackQuery):
+	action, *params = callback.data.split(":")
+	uid = params[-1]
+	user_id = str(callback.from_user.id)
+	state_data = await r.get(f"music_session:{user_id}:{uid}")
+	if not state_data:
+		await callback.answer("Сессия истекла.", show_alert=True)
+		await callback.message.delete()
+		return
+	state = json.loads(state_data)
+	
+	if action == "select_song":
+		idx = int(params[0])
+		song = state["list"][idx]
+		await callback.answer(f"Загружаю: {song.get('artist')}...")
+		audio_data = await download_audio(song.get('link'))
+		if audio_data:
+			await callback.message.answer_audio(
+				audio=BufferedInputFile(audio_data, filename=f"{song.get('artist')}-{song.get('title')}.mp3"),
+				performer=song.get('artist'),
+				title=song.get('title'),
+				duration=song.get('duration')
+			)
+			# await callback.message.delete()
+		else:
+			await callback.answer("❌ Ошибка скачивания.", show_alert=True)
+	elif action in ["prev_page", "next_page"]:
+		state["current_page"] += 1 if action == "next_page" else -1
+		await r.set(f"music_session:{user_id}:{uid}", json.dumps(state), ex=600)
+		num_pages = -(-len(state["list"]) // state["items_per_page"])
+		keyboard = create_keyboard(state["list"], state["current_page"], state["items_per_page"], uid, num_pages)
+		await callback.message.edit_reply_markup(reply_markup=keyboard)
+	elif action == "cancel":
+		await callback.message.delete()
+		await r.delete(f"music_session:{user_id}:{uid}")
+		await callback.answer("Поиск отменён.")
+	await callback.answer()
+
+
+async def handle_chat_request(message: Message, text: str):
+	p_msg = await message.reply("🤖...")
+	# Проверяем, что текст не пустой
+	try:
+		response = await client.aio.models.generate_content(
+			model=MODEL_25,
+			contents=text,
+			config=genai.types.GenerateContentConfig(
+				tools=[{"google_search": {}}],
+				system_instruction="You are a helpful assistant with access to real-time Google Search. Use search when needed to answer accurately. Answer in a user question language"
+			)
+		)
+		await p_msg.edit_text(response.text)
+	except Exception as e:
+		logging.error(f"Ошибка чата Gemini: {e}")
+		await p_msg.edit_text("😕 Мой AI-мозг временно перегружен.")
+
+
+async def on_startup(bot: Bot) -> None:
+	"""Действия при запуске бота: проверка и установка вебхука."""
+	# Проверяем, что все необходимые переменные для вебхука установлены
+	if not all([WEBHOOK_HOST, WEBHOOK_SECRET]):
+		logging.critical("WEBHOOK_HOST или WEBHOOK_SECRET не установлены! Бот не может запуститься в режиме вебхука.")
+		sys.exit(1)
+
+	try:
+		# Получаем текущую информацию о вебхуке
+		current_webhook = await bot.get_webhook_info()
+
+		# Если URL не совпадает с целевым, выполняем полную и чистую переустановку.
+		# Это решает проблему, когда вебхук был установлен некорректно (например, с пустым URL).
+		if current_webhook.url != BASE_WEBHOOK_URL:
+			logging.info(f"Текущий URL вебхука ('{current_webhook.url or 'не установлен'}') отличается от целевого. Выполняем обновление...")
+			
+			# Сначала удаляем старый вебхук, чтобы обеспечить чистое состояние.
+			await bot.delete_webhook(drop_pending_updates=True)
+			logging.info("Старый вебхук удален (или не был установлен).")
+			
+			# Затем устанавливаем новый.
+			await bot.set_webhook(url=BASE_WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
+			logging.info(f"Вебхук успешно установлен на {BASE_WEBHOOK_URL}")
+		else:
+			logging.info(f"Вебхук уже установлен на {BASE_WEBHOOK_URL}. Пропускаем установку.")
+
+	except TelegramAPIError as e:
+		# Обрабатываем конкретные ошибки, которые могут возникнуть при установке вебхука
+		if "Failed to resolve host" in str(e):
+			logging.critical(
+				f"Критическая ошибка: Telegram не может разрешить хост '{WEBHOOK_HOST}'. "
+				"Возможные причины:\n"
+				"1. Ошибка в доменном имени в переменной WEBHOOK_HOST.\n"
+				"2. DNS-запись еще не обновилась (требуется время на распространение).\n"
+				"3. Проблемы с DNS-провайдером или сетевые ограничения.\n"
+			)
+		else:
+			logging.critical(f"Ошибка при установке вебхука: {e}")
+		sys.exit(1)
+	except Exception as e:
+		logging.critical(f"Непредвиденная ошибка при установке вебхука: {e}")
+		sys.exit(1)
+
+async def on_shutdown(bot: Bot) -> None:
+	"""Действия при остановке бота: удаление вебхука и закрытие соединений."""
+	logging.info("Остановка бота...")
+	await bot.delete_webhook()
+	logging.info("Вебхук удален.")
+	await r.close()
+	logging.info("Соединение с Redis закрыто.")
+
+async def main():
+	# Регистрируем обработчики жизненного цикла
+	dp.startup.register(on_startup)
+	dp.shutdown.register(on_shutdown)
+
+	# Создаем приложение aiohttp
+	app = web.Application()
+
+	# Создаем эндпоинт для healthcheck, который требует docker-compose.yml
+	async def health_check(request: web.Request) -> web.Response:
+		return web.Response(text="OK")
+	app.router.add_get("/health", health_check)
+
+	# Создаем обработчик вебхуков
+	webhook_requests_handler = SimpleRequestHandler(
+		dispatcher=dp, bot=bot, secret_token=WEBHOOK_SECRET,
+	)
+	# Регистрируем его в приложении
+	webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+
+	# "Монтируем" диспетчер и бота в приложение aiohttp
+	setup_application(app, dp, bot=bot)
+
+	# Запускаем веб-сервер
+	runner = web.AppRunner(app)
+	await runner.setup()
+	site = web.TCPSite(runner, WEB_SERVER_HOST, WEB_SERVER_PORT)
+	logging.info(f"✅ Бот запущен в режиме webhook на http://{WEB_SERVER_HOST}:{WEB_SERVER_PORT}")
+	await site.start()
+
+	# Бесконечно ждем, пока приложение не будет остановлено
+	await asyncio.Event().wait()
+
+if __name__ == "__main__":
+	logging.info("Запуск бота...")
+	try:
+		asyncio.run(main())
+	except KeyboardInterrupt:
+		# Обработка Ctrl+C
+		logging.info("Бот остановлен вручную (KeyboardInterrupt).")
+	except SystemExit as e:
+		# Обработка вызовов sys.exit()
+		if e.code == 0 or e.code is None:
+			logging.info("Бот штатно завершил работу.")
+		else:
+			logging.critical(f"Бот остановлен из-за критической ошибки (exit code: {e.code}).")
 				async with session.get(search_url, timeout=15) as response:
 					if response.status != 200:
 						logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
