@@ -344,12 +344,18 @@ async def ai_router_handler(message: Message):
             queue_processors[queue_key] = processor_task
             logging.info(f"Создана новая очередь и обработчик для '{queue_key}'")
 
+    # Проверяем, пуста ли очередь. Если да, то запрос, скорее всего,
+    # будет обработан немедленно, и сообщение об очереди не нужно.
+    is_queue_busy = not user_queues[queue_key].empty()
+
     try:
         user_queues[queue_key].put_nowait(message)
-        reply_msg = await message.reply("⏳ Ваш запрос добавлен в очередь...")
-        # Создаем фоновую задачу для удаления этого сообщения через 3 секунды
-        asyncio.create_task(delete_message_after_delay(reply_msg, 3))
+        if is_queue_busy:
+            # Отправляем сообщение об очереди, только если она была не пуста
+            reply_msg = await message.reply("⏳ Ваш запрос добавлен в очередь...")
+            asyncio.create_task(delete_message_after_delay(reply_msg, 3))
     except asyncio.QueueFull:
+        # Это сработает, если очередь была заполнена до предела
         await message.reply("⌛️ Очередь запросов переполнена. Пожалуйста, повторите попытку позже.")
         logging.warning(f"Очередь запросов для '{queue_key}' переполнена. Новый запрос отброшен.")
 
