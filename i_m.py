@@ -1007,6 +1007,21 @@ async def handle_yandex_music(message: Message, content: dict):
 		for attempt in range(1, MAX_ATTEMPTS + 1):
 			await p_msg.edit_text(f"🎶 Ищем трек... (попытка {attempt}/{MAX_ATTEMPTS})")
 			try:
+				# --- Получаем свежий анонимный токен перед запросом ---
+				# Статический токен быстро устаревает, поэтому получаем новый каждый раз.
+				# Этот запрос не требует прокси.
+				async with aiohttp.ClientSession() as token_session:
+					async with token_session.get('https://music.yandex.ru/handlers/auth.jsx?non-interactive=true', headers={'X-Retpath-Y': 'https://music.yandex.ru/'}) as token_response:
+						if token_response.status == 200:
+							token_data = await token_response.json()
+							access_token = token_data.get('access_token')
+							if access_token:
+								headers['Authorization'] = f'OAuth {access_token}'
+								logging.info("Успешно получен анонимный токен для Яндекс.Музыки.")
+							else:
+								logging.error("Не удалось извлечь access_token из ответа Яндекс.Музыки.")
+								continue # Пропускаем попытку, если токен не получен
+
 				logging.info(f"Запрос к {api_url} через российский прокси...")
 				async with session.get(api_url, timeout=15) as response:
 					if response.status == 200:
