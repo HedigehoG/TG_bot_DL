@@ -1078,7 +1078,12 @@ async def handle_sberzvuk_music(message: Message, content: dict):
 							album_date = release_info.get('date')
 							album_year_val = album_date.split('-')[0] if album_date else None
 							album_year = f"({album_year_val})" if album_year_val else ""
-							cover_url = release_info.get("image", {}).get("src")
+							
+							# Исправляем URL обложки: API может вернуть URL без протокола (//i.zvuk.com/...)
+							# Telegram не может обработать такие ссылки, поэтому добавляем https:
+							cover_url_raw = release_info.get("image", {}).get("src")
+							cover_url = f"https:{cover_url_raw}" if cover_url_raw and cover_url_raw.startswith('//') else cover_url_raw
+
 							music_info = {
 								'artist': artists, 'title': title, 'duration_sec': duration_sec,
 								'cover_url': cover_url, 'album_title': album_title, 'album_year': album_year,
@@ -1284,8 +1289,11 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	"""Универсальный парсер музыкальных сайтов, управляемый конфигурацией."""
 	# Специальная обработка для skysound, где запрос - это поддомен
 	if config["name"] == "skysound7.com":
-		# Кодируем запрос в punycode и формируем URL
-		encoded_query = song_name.encode('idna').decode('ascii')
+		# 1. Подготавливаем запрос: заменяем пробелы на дефисы и удаляем все недопустимые символы.
+		# Это необходимо для корректного Punycode-кодирования.
+		prepared_query = re.sub(r'[^a-zA-Zа-яА-Я0-9\s-]', '', song_name).replace(' ', '-')
+		# 2. Кодируем подготовленный запрос в punycode и формируем URL.
+		encoded_query = prepared_query.encode('idna').decode('ascii')
 		search_url = config["base_url"].format(query_subdomain=encoded_query)
 	else:
 		# Стандартная логика для остальных сайтов
@@ -1308,12 +1316,35 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 		session_args["connector"] = connector
 
 	try:
-		async with aiohttp.ClientSession(**session_args) as session:
-			async with session.get(search_url, timeout=15) as response:
-				if response.status != 200:
-					logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
-					return None
-				soup = BeautifulSoup(await response.text(), 'html.parser')
+		# Специальная обработка для muzika.fun, которая требует сохранения Referer при редиректе
+		if config["name"] == "muzika.fun":
+			async with aiohttp.ClientSession(**session_args) as session:
+				# Делаем первый запрос, не следуя редиректам
+				async with session.get(search_url, timeout=15, allow_redirects=False) as response:
+					# Если есть редирект (301, 302), переходим по новому URL, сохраняя заголовки
+					if response.status in (301, 302, 307, 308) and 'Location' in response.headers:
+						redirect_url = response.headers['Location']
+						# Убедимся, что URL полный
+						if redirect_url.startswith('/'):
+							redirect_url = config['base_url'] + redirect_url
+						logging.info(f"muzika.fun редирект на: {redirect_url}")
+						async with session.get(redirect_url, timeout=15) as final_response:
+							if final_response.status != 200:
+								logging.error(f"Ошибка HTTP {final_response.status} при запросе {redirect_url}")
+								return None
+							soup = BeautifulSoup(await final_response.text(), 'html.parser')
+					elif response.status == 200:
+						soup = BeautifulSoup(await response.text(), 'html.parser')
+					else:
+						logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
+						return None
+		else: # Стандартная логика для всех остальных сайтов
+			async with aiohttp.ClientSession(**session_args) as session:
+				async with session.get(search_url, timeout=15) as response:
+					if response.status != 200:
+						logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
+						return None
+					soup = BeautifulSoup(await response.text(), 'html.parser')
 	except Exception as e:
 		logging.error(f"Ошибка при запросе {search_url}: {e}", exc_info=True)
 		return None
