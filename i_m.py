@@ -310,12 +310,15 @@ def check_tor_connection(control_port=9051, cookie_path="/run/tor/control.authco
 # --- Настройка прокси для Instagram ---
 # Пример: "http://user:password@host:port" или "socks5://host:port"
 INSTAGRAM_PROXY = os.getenv("INSTAGRAM_PROXY")
+RUSSIAN_PROXY = os.getenv("RUSSIAN_PROXY")
 
 def get_proxy(args=None):
 	proxies = {
 		"instagram": lambda: INSTAGRAM_PROXY,
 		"tor": lambda: f"socks5://{TOR_HOST}:9050" if check_tor_connection() else None,
-		"freeproxy": lambda: None
+		# Добавляем новый тип прокси для доступа к российским ресурсам
+		"russian": lambda: RUSSIAN_PROXY,
+		"freeproxy": lambda: None,
 	}
 	proxy = proxies.get(args, lambda: None)()
 	logging.info(f"Используется прокси: {proxy}")
@@ -1421,6 +1424,7 @@ SEARCH_PROVIDER_CONFIGS = [
 		"extractor_func": _extractor_muzika_fun,
 		# Добавляем Referer, чтобы обойти ошибку 403 Forbidden
 		"headers": {**BASE_HEADERS, "Referer": "https://w1.muzika.fun/"},
+		"proxy": "tor", # Добавляем Tor для обхода региональных блокировок
 	},
 	{
 		"name": "mp3iq.net",
@@ -1454,7 +1458,8 @@ SEARCH_PROVIDER_CONFIGS = [
 		"search_path": "/", # Путь не используется, но оставляем для консистентности
 		"item_selector": "li.__adv_list_track", # Селектор изменился
 		"extractor_func": _extractor_skysound,
-		"headers": BASE_HEADERS, # Referer здесь не нужен, так как домен всегда разный
+		"headers": BASE_HEADERS,
+		"proxy": "tor", # Для этого сайта требуется российский прокси
 	},
 ]
 
