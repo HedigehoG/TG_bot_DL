@@ -1,13 +1,14 @@
-requests
-debugpy
-python-dotenv
-instagrapi
-pydantic
-google-genai 
 aiogram
 aiohttp
 aiohttp-socks
-redis
 beautifulsoup4
-stem
+google-genai
+instagrapi
+pydantic
 pyshorteners
+python-dotenv
+redis
+requests
+stem
+# Для отладки (опционально)
+debugpy

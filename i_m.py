@@ -146,6 +146,12 @@ queue_processors = {}
 # Блокировка для синхронизации доступа к словарям
 queues_lock = asyncio.Lock()
 
+# --- Переменные для кэширования рабочего российского прокси ---
+_working_russian_proxy = None
+_russian_proxy_expiry = 0
+_russian_proxy_lock = asyncio.Lock()
+RUSSIAN_PROXY_CACHE_TTL = 600 # 10 минут
+
 # --- Глобальный кэш для клиентов Instagrapi ---
 # Используем потокобезопасную блокировку, так как доступ к кэшу будет из разных потоков
 INSTA_CLIENTS_CACHE = {}
@@ -339,17 +345,59 @@ def check_tor_connection(control_port=9051, cookie_path="/run/tor/control.authco
 # --- Настройка прокси для Instagram ---
 # Пример: "http://user:password@host:port" или "socks5://host:port"
 INSTAGRAM_PROXY = os.getenv("INSTAGRAM_PROXY")
-RUSSIAN_PROXY = os.getenv("RUSSIAN_PROXY")
+RUSSIAN_PROXIES_RAW = os.getenv("RUSSIAN_PROXIES")
+RUSSIAN_PROXIES = RUSSIAN_PROXIES_RAW.split(',') if RUSSIAN_PROXIES_RAW else []
 
-def get_proxy(args=None):
+async def _get_working_russian_proxy():
+    """
+    Проверяет список российских прокси и возвращает первый рабочий.
+    Результат кешируется на 10 минут.
+    """
+    global _working_russian_proxy, _russian_proxy_expiry
+
+    # Используем блокировку, чтобы избежать гонки состояний, когда несколько
+    # запросов одновременно пытаются проверить прокси.
+    async with _russian_proxy_lock:
+        # Проверяем, есть ли в кэше валидный прокси
+        if _working_russian_proxy and time.monotonic() < _russian_proxy_expiry:
+            logging.info(f"Используется кэшированный российский прокси: {_working_russian_proxy}")
+            return _working_russian_proxy
+
+        if not RUSSIAN_PROXIES:
+            logging.warning("Список российских прокси (RUSSIAN_PROXIES) пуст.")
+            return None
+
+        logging.info("Кэш российского прокси истек или пуст. Начинаю проверку...")
+        for proxy_url in RUSSIAN_PROXIES:
+            logging.info(f"Проверяю прокси: {proxy_url}...")
+            try:
+                connector = ProxyConnector.from_url(proxy_url)
+                async with aiohttp.ClientSession(connector=connector) as session:
+                    # Проверяем доступ к yandex.ru, так как это надежный российский ресурс
+                    async with session.get("https://yandex.ru", timeout=5) as response:
+                        if response.status == 200:
+                            logging.info(f"✅ Прокси {proxy_url} работает. Кэширую на {RUSSIAN_PROXY_CACHE_TTL} секунд.")
+                            _working_russian_proxy = proxy_url
+                            _russian_proxy_expiry = time.monotonic() + RUSSIAN_PROXY_CACHE_TTL
+                            return _working_russian_proxy
+            except Exception as e:
+                logging.warning(f"❌ Прокси {proxy_url} не работает: {e}")
+                continue
+
+        logging.error("Ни один из российских прокси не доступен.")
+        _working_russian_proxy = None # Сбрасываем кэш, если ничего не работает
+        return None
+
+async def get_proxy(args=None):
 	proxies = {
 		"instagram": lambda: INSTAGRAM_PROXY,
 		"tor": lambda: f"socks5://{TOR_HOST}:9050" if check_tor_connection() else None,
 		# Добавляем новый тип прокси для доступа к российским ресурсам
-		"russian": lambda: RUSSIAN_PROXY,
+		"russian": _get_working_russian_proxy,
 		"freeproxy": lambda: None,
 	}
-	proxy = proxies.get(args, lambda: None)()
+	proxy_func = proxies.get(args, lambda: None)
+	proxy = await proxy_func() if asyncio.iscoroutinefunction(proxy_func) else proxy_func()
 	logging.info(f"Используется прокси: {proxy}")
 	return proxy
 
@@ -473,8 +521,8 @@ def get_instagram_client(user_id: str, session_data: dict | None = None, usernam
 	# Попытка 1: Восстановить сессию из Redis
 	if session_data:
 		cl = Client()
-		cl.delay_range = [1, 4]
-		proxy = get_proxy("instagram")
+		cl.delay_range = [2, 4]
+		proxy = await get_proxy("instagram")
 		if proxy: cl.set_proxy(proxy)
 		try:
 			cl.set_settings(session_data)
@@ -487,8 +535,8 @@ def get_instagram_client(user_id: str, session_data: dict | None = None, usernam
 	# Попытка 2: Войти по логину и паролю (если восстановление по сессии не удалось)
 	if not new_client and username and password:
 		cl = Client()
-		cl.delay_range = [1, 6]
-		proxy = get_proxy("instagram")
+		cl.delay_range = [2, 6]
+		proxy = await get_proxy("instagram")
 		if proxy: cl.set_proxy(proxy)
 		try:
 			cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
@@ -936,7 +984,7 @@ async def handle_yandex_music(message: Message, content: dict):
 		track_id = match.group(1)
 
 	# 1. Get Tor proxy
-	proxy_url = get_proxy('tor')
+	proxy_url = await get_proxy('tor')
 	if not proxy_url:
 		await p_msg.edit_text("⚠️ Tor-прокси не настроен или недоступен.")
 		return
@@ -1396,7 +1444,7 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	proxy_type = config.get("proxy")
 	if proxy_type:
 		logging.info(f"Для сайта {config['name']} требуется прокси типа '{proxy_type}'.")
-		proxy_url = get_proxy(proxy_type)
+		proxy_url = await get_proxy(proxy_type)
 		if not proxy_url:
 			# Если для сайта требуется прокси, но он недоступен, немедленно прекращаем работу.
 			# Это предотвращает утечку реального IP и бесполезные запросы к заблокированным ресурсам.
@@ -1409,9 +1457,10 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 	# --- Логика запроса с ретраями для Tor ---
 	max_retries = 3 if proxy_type == "tor" else 1
 	soup = None
-	for attempt in range(max_retries):
-		try:
-			async with aiohttp.ClientSession(**session_args) as session:
+	# Создаем сессию один раз перед циклом ретраев
+	async with aiohttp.ClientSession(**session_args) as session:
+		for attempt in range(max_retries):
+			try:
 				# Для muzika.fun нужна ручная обработка редиректа
 				if config["name"] == "muzika.fun":
 					async with session.get(search_url, timeout=15, allow_redirects=False) as response:
@@ -1435,23 +1484,23 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
 							soup = BeautifulSoup(await response.text(), 'html.parser')
 						else:
 							logging.error(f"Ошибка HTTP {response.status} при запросе {search_url}")
-			
-			if soup:
-				break # Успех, выходим из цикла ретраев
+				
+				if soup:
+					break # Успех, выходим из цикла ретраев
 
-		except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
-			logging.error(f"Попытка {attempt + 1}/{max_retries}: Ошибка соединения при запросе {search_url}: {e}")
-		except Exception as e:
-			logging.error(f"Попытка {attempt + 1}/{max_retries}: Неожиданная ошибка при запросе {search_url}: {e}", exc_info=True)
+			except (aiohttp.ClientConnectorError, aiohttp.ServerDisconnectedError, asyncio.TimeoutError) as e:
+				logging.error(f"Попытка {attempt + 1}/{max_retries}: Ошибка соединения при запросе {search_url}: {e}")
+			except Exception as e:
+				logging.error(f"Попытка {attempt + 1}/{max_retries}: Неожиданная ошибка при запросе {search_url}: {e}", exc_info=True)
 
-		# Если попытка не удалась и это был Tor, меняем IP
-		if attempt < max_retries - 1:
-			if proxy_type == "tor":
-				logging.info(f"Меняю IP Tor и жду...")
-				check_tor_connection(renew=True)
-				await asyncio.sleep(3)
-			else:
-				await asyncio.sleep(1) # Небольшая пауза для других типов ошибок
+			# Если попытка не удалась и это был Tor, меняем IP
+			if attempt < max_retries - 1:
+				if proxy_type == "tor":
+					logging.info(f"Меняю IP Tor и жду...")
+					check_tor_connection(renew=True)
+					await asyncio.sleep(3)
+				else:
+					await asyncio.sleep(1) # Небольшая пауза для других типов ошибок
 
 	if not soup:
 		return None
@@ -1488,7 +1537,7 @@ SEARCH_PROVIDER_CONFIGS = [
 		"extractor_func": _extractor_muzika_fun,
 		# Добавляем Referer, чтобы обойти ошибку 403 Forbidden
 		"headers": {**BASE_HEADERS, "Referer": "https://w1.muzika.fun/"},
-		"proxy": "tor", # Добавляем Tor для обхода региональных блокировок
+		"proxy": "russian", # Используем российский прокси
 	},
 	{
 		"name": "mp3iq.net",
@@ -1497,7 +1546,7 @@ SEARCH_PROVIDER_CONFIGS = [
 		"item_selector": "li.track",
 		"extractor_func": _extractor_mp3iq,
 		"headers": {**BASE_HEADERS, "Referer": "https://mp3iq.net/"},
-		"proxy": "tor", # Для этого сайта требуется Tor
+		"proxy": "russian", # Используем российский прокси
 	},
 	{
 		"name": "mp3party.net",
@@ -1506,6 +1555,7 @@ SEARCH_PROVIDER_CONFIGS = [
 		"item_selector": "div.track.song-item",
 		"extractor_func": _extractor_mp3party,
 		"headers": {**BASE_HEADERS, "Referer": "https://mp3party.net/"},
+		"proxy": "russian", # Используем российский прокси
 	},
 	{
 		"name": "muzyet.com",
@@ -1514,6 +1564,7 @@ SEARCH_PROVIDER_CONFIGS = [
 		"item_selector": "div.song_list item", # Селектор изменился
 		"extractor_func": _extractor_muzyet,
 		"headers": BASE_HEADERS,
+		"proxy": "russian", # Используем российский прокси
 	},
 	{
 		"name": "skysound7.com",
