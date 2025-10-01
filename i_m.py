@@ -985,10 +985,10 @@ async def handle_yandex_music(message: Message, content: dict):
 			return
 		track_id = match.group(1)
 
-	# 1. Get Tor proxy
-	proxy_url = await get_proxy('tor')
+	# 1. Get Russian proxy
+	proxy_url = await get_proxy('russian')
 	if not proxy_url:
-		await p_msg.edit_text("⚠️ Tor-прокси не настроен или недоступен.")
+		await p_msg.edit_text("⚠️ Российский прокси не настроен или недоступен. Проверьте `RUSSIAN_PROXIES` в секретах.")
 		return
 
 	# 2. Setup aiohttp session with proxy
@@ -1001,13 +1001,13 @@ async def handle_yandex_music(message: Message, content: dict):
 	
 	api_url = f'https://api.music.yandex.net/tracks/{track_id}'
 	music_info = None
-	MAX_ATTEMPTS = 3
+	MAX_ATTEMPTS = 1 # С обычным прокси нет смысла в ретраях со сменой IP
 
 	async with aiohttp.ClientSession(connector=connector, headers=headers) as session:
 		for attempt in range(1, MAX_ATTEMPTS + 1):
 			await p_msg.edit_text(f"🎶 Ищем трек... (попытка {attempt}/{MAX_ATTEMPTS})")
 			try:
-				logging.info(f"Запрос к {api_url} через Tor...")
+				logging.info(f"Запрос к {api_url} через российский прокси...")
 				async with session.get(api_url, timeout=15) as response:
 					if response.status == 200:
 						data = await response.json()
@@ -1042,17 +1042,9 @@ async def handle_yandex_music(message: Message, content: dict):
 							break # Success, exit loop
 					else:
 						logging.warning(f"Попытка {attempt}: Яндекс.Музыка вернула статус {response.status}. Текст: {await response.text(encoding='utf-8', errors='ignore')}")
-						if attempt < MAX_ATTEMPTS:
-							await p_msg.edit_text(f"⚠️ Ответ {response.status}. Меняю IP Tor...")
-							check_tor_connection(renew=True)
-							await asyncio.sleep(3)
 						
 			except Exception as e:
 				logging.error(f"Попытка {attempt}: Ошибка при запросе к Яндекс.Музыке: {e}")
-				if attempt < MAX_ATTEMPTS:
-					await p_msg.edit_text(f"⚠️ Ошибка соединения. Меняю IP Tor...")
-					check_tor_connection(renew=True)
-					await asyncio.sleep(3)
 
 	if music_info:
 		# --- Сначала выводим информацию о треке ---
@@ -1086,7 +1078,7 @@ async def handle_yandex_music(message: Message, content: dict):
 		# Вызываем поиск без p_msg, чтобы он создал новое сообщение и не трогал это
 		await handle_song_search(message, song_obj)
 	else:
-		await p_msg.edit_text("❌ Не удалось получить информацию о треке после нескольких попыток. Сервис может быть недоступен через Tor.")
+		await p_msg.edit_text("❌ Не удалось получить информацию о треке. Сервис может быть недоступен через прокси.")
 
 async def handle_sberzvuk_music(message: Message, content: dict):
 	"""Обрабатывает ссылки на треки из Звук (zvuk.com), включая короткие share.zvuk.com."""
