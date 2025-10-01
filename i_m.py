@@ -374,7 +374,7 @@ async def _get_working_russian_proxy():
                 connector = ProxyConnector.from_url(proxy_url)
                 async with aiohttp.ClientSession(connector=connector) as session:
                     # Проверяем доступ к yandex.ru, так как это надежный российский ресурс
-                    async with session.get("https://yandex.ru", timeout=5) as response:
+                    async with session.get("https://ya.ru", timeout=5) as response:
                         if response.status == 200:
                             logging.info(f"✅ Прокси {proxy_url} работает. Кэширую на {RUSSIAN_PROXY_CACHE_TTL} секунд.")
                             _working_russian_proxy = proxy_url
