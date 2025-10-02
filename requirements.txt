@@ -11,4 +11,4 @@ redis
 requests
 stem
 # Для отладки (опционально)
-debugpy
+debugpyruff 
