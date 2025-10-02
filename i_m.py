@@ -992,7 +992,10 @@ async def handle_yandex_music(message: Message, content: dict):
 		return
 
 	# 2. Setup aiohttp session with proxy
-	connector = ProxyConnector.from_url(proxy_url)
+	# Принудительно используем HTTP/1.1, так как API Яндекса и прокси могут нестабильно работать с HTTP/2.
+	# Это также соответствует успешному ручному тесту через curl.
+	connector = ProxyConnector.from_url(proxy_url, force_close=True)
+
 	headers = {
 		'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
 		'Accept': 'application/json',
@@ -1007,21 +1010,6 @@ async def handle_yandex_music(message: Message, content: dict):
 		for attempt in range(1, MAX_ATTEMPTS + 1):
 			await p_msg.edit_text(f"🎶 Ищем трек... (попытка {attempt}/{MAX_ATTEMPTS})")
 			try:
-				# --- Получаем свежий анонимный токен перед запросом ---
-				# Статический токен быстро устаревает, поэтому получаем новый каждый раз.
-				# Этот запрос не требует прокси.
-				async with aiohttp.ClientSession() as token_session:
-					async with token_session.get('https://music.yandex.ru/handlers/auth.jsx?non-interactive=true', headers={'X-Retpath-Y': 'https://music.yandex.ru/'}) as token_response:
-						if token_response.status == 200:
-							token_data = await token_response.json()
-							access_token = token_data.get('access_token')
-							if access_token:
-								headers['Authorization'] = f'OAuth {access_token}'
-								logging.info("Успешно получен анонимный токен для Яндекс.Музыки.")
-							else:
-								logging.error("Не удалось извлечь access_token из ответа Яндекс.Музыки.")
-								continue # Пропускаем попытку, если токен не получен
-
 				logging.info(f"Запрос к {api_url} через российский прокси...")
 				async with session.get(api_url, timeout=15) as response:
 					if response.status == 200:
@@ -1055,6 +1043,24 @@ async def handle_yandex_music(message: Message, content: dict):
 							}
 							logging.info(f"Найден трек: {artists} - {title}")
 							break # Success, exit loop
+					elif response.status == 401: # Unauthorized
+						logging.warning("Яндекс.Музыка требует авторизацию (401). Пытаюсь получить анонимный токен...")
+						# --- Получаем свежий анонимный токен ---
+						async with session.get('https://music.yandex.ru/handlers/auth.jsx?non-interactive=true', headers={'X-Retpath-Y': 'https://music.yandex.ru/'}, timeout=10) as token_response:
+							if token_response.status == 200:
+								token_data = await token_response.json()
+								access_token = token_data.get('access_token')
+								if access_token:
+									headers['Authorization'] = f'OAuth {access_token}'
+									logging.info("Успешно получен анонимный токен. Повторяю запрос к API...")
+									# Повторяем запрос уже с заголовком авторизации
+									continue
+								else:
+									logging.error("Не удалось извлечь access_token из ответа Яндекс.Музыки (возможно, IP заблокирован или требует капчу).")
+									break # Прерываем, так как без токена дальше нет смысла
+							else:
+								logging.error(f"Не удалось получить токен, статус: {token_response.status}")
+								break
 					else:
 						logging.warning(f"Попытка {attempt}: Яндекс.Музыка вернула статус {response.status}. Текст: {await response.text(encoding='utf-8', errors='ignore')}")
 						
