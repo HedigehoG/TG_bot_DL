@@ -227,7 +227,8 @@ install_tor() {
   usermod -aG debian-tor "${DEPLOY_USER}"
 
   # Перезапускаем Tor, чтобы применились стандартные настройки с ControlPort
-  systemctl restart tor
+  # и включаем его для автоматического запуска при перезагрузке сервера.
+  systemctl enable --now tor
   echo "Tor успешно установлен и запущен."
 
   # Проверка создания cookie файла
@@ -372,9 +373,6 @@ services:
     env_file:
       - .env.server # Статичная конфигурация сервера
       - .env        # Секреты, управляемые через CI/CD
-    volumes:
-      # Пробрасываем cookie-файл для управления Tor (только для чтения)
-      - /run/tor/control.authcookie:/run/tor/control.authcookie:ro
     restart: unless-stopped
     # Настройка ротации логов, чтобы они не занимали все место на диске.
     # Храним 3 файла логов по 10MB каждый.

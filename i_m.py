@@ -339,16 +339,24 @@ async def check_tor_connection(
     def _check_and_renew():
         try:
             with Controller.from_port(address=TOR_HOST, port=control_port) as controller:
+                # Пытаемся аутентифицироваться. stem автоматически найдет cookie,
+                # если он доступен по стандартному пути, который виден из контейнера
+                # благодаря network_mode: host.
                 controller.authenticate()
                 if controller.is_alive():
                     logging.info("🟢 Tor работает. Версия: %s", controller.get_version())
                     if renew:
-                        logging.info("🔄 Новая цепочка Tor (перезапрос IP)...")
+                        logging.info("🔄 Запрашиваю новую цепочку Tor (смена IP)...")
                         controller.signal("NEWNYM")
                     return True
                 else:
                     logging.warning("❌ Контроллер неактивен.")
                     return False
+        except FileNotFoundError:
+            # Это исключение возникнет, если файл /run/tor/control.authcookie не найден,
+            # что означает, что сервис Tor, скорее всего, выключен.
+            logging.warning("❌ Файл аутентификации Tor не найден. Сервис выключен?")
+            return False
         except AuthenticationFailure as e:
             logging.error("❌ Ошибка аутентификации: %s", e)
             return False
