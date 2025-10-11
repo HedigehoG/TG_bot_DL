@@ -40,12 +40,13 @@ WORKDIR /app
 # Копируем виртуальное окружение со всеми зависимостями из сборщика
 COPY --from=builder /opt/venv /opt/venv
 
-# Копируем остальной код приложения
-COPY . .
+# Копируем только необходимые для работы файлы
+COPY src/i_m.py .
+COPY scripts/entrypoint.sh .
+COPY deploy/wait-for-dns.py .
 
-# Даем права на выполнение для entrypoint.sh. Это необходимо, так как
-# права могут теряться при копировании, особенно с Windows хоста.
-RUN chmod +x ./entrypoint.sh
+# Даем права на выполнение для entrypoint.sh
+RUN chmod +x entrypoint.sh
 
 # Активируем виртуальное окружение для всех последующих команд
 ENV PATH="/opt/venv/bin:$PATH"
