@@ -1,4 +1,3 @@
-import requests
 import debugpy  # https://github.com/microsoft/debugpy
 
 import asyncio
@@ -1299,7 +1298,7 @@ async def handle_yandex_music(message: Message, content: dict):
                 )
                 async with session.get(api_url, timeout=15) as response:
                     if response.status == 200:
-                        data = await response.json()
+                        data = await response.json(content_type=None)
                         music_info = await _parse_yandex_music_response(data)
                         if music_info:
                             music_info["source_url"] = message.text

@@ -8,7 +8,7 @@ pydantic
 pyshorteners
 python-dotenv
 redis
-requests
 stem
 # Для отладки (опционально)
-debugpyruff 
+debugpy
+ruff

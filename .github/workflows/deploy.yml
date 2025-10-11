@@ -136,7 +136,7 @@ jobs:
             echo "3. Ensuring production memory limits"
             # Возвращаем стандартные лимиты памяти для продакшена.
             sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 200m/' docker-compose.yml
-            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 300m/' docker-compose.yml
+            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 400m/' docker-compose.yml
 
             # Определяем, какой образ разворачивать.
             # При deploy_only используется github.repository, который может содержать заглавные буквы.
@@ -252,7 +252,7 @@ jobs:
             # Увеличиваем лимит памяти, т.к. debugpy добавляет накладные расходы,
             # и OOM killer может остановить контейнер.
             sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 512m/' docker-compose.yml
-            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 1024m/' docker-compose.yml
+            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 1g/' docker-compose.yml
 
             echo "5. Restarting container with new settings"
             docker compose up -d --force-recreate --remove-orphans
