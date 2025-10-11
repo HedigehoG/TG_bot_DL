@@ -1,5 +1,12 @@
 #!/bin/sh
 
+# Устанавливаем часовой пояс, если переменная TZ задана
+if [ -n "$TZ" ]; then
+  echo "Установка часового пояса на $TZ"
+  ln -snf "/usr/share/zoneinfo/$TZ" /etc/localtime
+  echo "$TZ" > /etc/timezone
+fi
+
 # set -e: Exit immediately if a command exits with a non-zero status.
 # This is a good practice for scripts to avoid unexpected behavior.
 set -e

@@ -24,6 +24,7 @@ BOT_NAME=${BOT_NAME:-}
 DEPLOY_USER=${DEPLOY_USER:-}
 WORK_DIR="" # Определяется на основе DEPLOY_USER
 LISTEN_PORT=${LISTEN_PORT:-}
+TIMEZONE=${TIMEZONE:-}
 CLEANUP_COMMAND_VAR=""
 DEPLOY_KEY_PATH=""
 
@@ -179,6 +180,14 @@ gather_interactive_inputs() {
     LISTEN_PORT=${listen_port_input:-${LISTEN_PORT_DEFAULT}}
   else
     echo "Используется порт для прослушивания из переменной окружения: ${LISTEN_PORT}"
+  fi
+
+  if [ -z "${TIMEZONE}" ]; then
+    local timezone_input
+    read -p "Введите часовой пояс в формате IANA (например, Europe/Moscow) [Asia/Vladivostok]: " timezone_input
+    TIMEZONE=${timezone_input:-'Asia/Vladivostok'}
+  else
+    echo "Используется часовой пояс из переменной окружения: ${TIMEZONE}"
   fi
 }
 
@@ -342,6 +351,9 @@ BOT_NAME=${BOT_NAME}
 # --- Webhook (управляется этим скриптом) ---
 WEBHOOK_HOST=${WEBHOOK_HOST_URL}
 WEBHOOK_SECRET=${webhook_secret_generated}
+
+# --- Timezone (управляется этим скриптом) ---
+TZ=${TIMEZONE}
 ENV
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${env_file}"
   echo ".env.server файл создан."
