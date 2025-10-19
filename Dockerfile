@@ -1,6 +1,6 @@
 # --- Этап 1: Сборщик (Builder) ---
 # Используем полный образ Python, который содержит все необходимые инструменты для сборки.
-FROM python:3.14 as builder
+FROM python:3.13 as builder
 
 # Устанавливаем рабочую директорию
 WORKDIR /app
@@ -33,7 +33,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # --- Этап 2: Финальный образ (Final Image) ---
 # Используем легковесный образ для уменьшения размера и повышения безопасности.
-FROM python:3.14-slim
+FROM python:3.13-slim
 
 WORKDIR /app
 
