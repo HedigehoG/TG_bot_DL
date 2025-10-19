@@ -66,6 +66,7 @@ TG_IDS_RAW = os.getenv("TG_IDS")
 if not TG_IDS_RAW:
     exit("TG_IDS is not set")
 TG_IDS = TG_IDS_RAW.split(",")  # Список ID администраторов
+TIMEZONE_OFFSET = int(os.getenv("TIMEZONE_OFFSET", 3))  # Смещение в часах от UTC
 # --- Настройка Telegram Bot ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
@@ -208,13 +209,13 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Выход:** `{ "type": "instagram_link", "content": { "shortcode": "Cxyz123" } }`
 
 ### **Тип: `music_service_link`**
-*   **Условие:** Сообщение — это ссылка на **трек** одного из сервисов:
+*   **Условие:** Сообщение — это ссылка на **трек** одного из сервисов. **Особенно обрати внимание на короткие ссылки `share.zvuk.com`.**
     *   `music.yandex.com/.../track/...`
     *   `zvuk.com/track/...` или короткая ссылка `share.zvuk.com/...`
     *   `music.mts.ru/track/...`
     *   `vk.com/music/track/...`
 *   **Действия:**
-    1.  Определи сервис по домену.
+    1.  Определи сервис по домену. Для `share.zvuk.com` сервис - `sberzvuk`.
     2.  Если это полная ссылка, извлеки уникальный ID трека. Для коротких ссылок (`share.zvuk.com`) ID извлекать не нужно, `track_id` будет `null`.
     3.  Если ссылка ведет на альбом, плейлист или страницу артиста, а не на конкретный трек, классифицируй ее как `chat`.
 *   **`content`:** Объект с ключами `service` (название в нижнем регистре: `yandex`, `sberzvuk`, `mts`, `vk`) и `track_id` (может быть `null` для коротких ссылок).
@@ -610,6 +611,7 @@ async def get_instagram_client(
     def _login_with_password(proxy_url):
         cl = Client()
         cl.delay_range = [2, 6]
+        cl.set_timezone_offset(TIMEZONE_OFFSET * 3600)
         if proxy_url:
             cl.set_proxy(proxy_url)
         cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
