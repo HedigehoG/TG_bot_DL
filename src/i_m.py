@@ -210,17 +210,19 @@ async def classify_message_with_ai(text: str) -> dict:
 ### **Тип: `music_service_link`**
 *   **Условие:** Сообщение — это ссылка на **трек** одного из сервисов:
     *   `music.yandex.com/.../track/...`
-    *   `zvuk.com/track/...`
+    *   `zvuk.com/track/...` или короткая ссылка `share.zvuk.com/...`
     *   `music.mts.ru/track/...`
     *   `vk.com/music/track/...`
 *   **Действия:**
     1.  Определи сервис по домену.
-    2.  Извлеки уникальный ID трека.
+    2.  Если это полная ссылка, извлеки уникальный ID трека. Для коротких ссылок (`share.zvuk.com`) ID извлекать не нужно, `track_id` будет `null`.
     3.  Если ссылка ведет на альбом, плейлист или страницу артиста, а не на конкретный трек, классифицируй ее как `chat`.
-*   **`content`:** Объект с ключами `service` (название в нижнем регистре: `yandex`, `sberzvuk`, `mts`, `vk`) и `track_id`.
+*   **`content`:** Объект с ключами `service` (название в нижнем регистре: `yandex`, `sberzvuk`, `mts`, `vk`) и `track_id` (может быть `null` для коротких ссылок).
 *   **Примеры:**
     *   **Вход:** `https://vk.com/music/track/505362945_456241371`
     *   **Выход:** `{ "type": "music_service_link", "content": { "service": "vk", "track_id": "505362945_456241371" } }`
+    *   **Вход:** `https://share.zvuk.com/cLQ0/1k5e8h2t`
+    *   **Выход:** `{ "type": "music_service_link", "content": { "service": "sberzvuk", "track_id": null } }`
     *   **Вход:** `https://music.yandex.com/album/123` (не трек)
     *   **Выход:** `{ "type": "chat", "content": "https://music.yandex.com/album/123" }`
 ### **Тип: `song`**
