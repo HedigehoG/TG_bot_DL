@@ -2265,7 +2265,7 @@ async def handle_chat_request(message: Message, text: str):
 
 
 async def on_startup(bot: Bot) -> None:
-    """Действия при запуске бота: проверка и установка вебхука."""
+    """Действия при запуске бота: принудительная установка/обновление вебхука."""
     # Проверяем, что все необходимые переменные для вебхука установлены
     if not all([WEBHOOK_HOST, WEBHOOK_SECRET]):
         logging.critical(
@@ -2274,27 +2274,16 @@ async def on_startup(bot: Bot) -> None:
         sys.exit(1)
 
     try:
-        # Получаем текущую информацию о вебхуке
-        current_webhook = await bot.get_webhook_info()
-
-        # Если URL не совпадает с целевым, выполняем полную и чистую переустановку.
-        # Это решает проблему, когда вебхук был установлен некорректно (например, с пустым URL).
-        if current_webhook.url != BASE_WEBHOOK_URL:
-            logging.info(
-                f"Текущий URL вебхука ('{current_webhook.url or 'не установлен'}') отличается от целевого. Выполняем обновление..."
-            )
-
-            # Сначала удаляем старый вебхук, чтобы обеспечить чистое состояние.
-            await bot.delete_webhook(drop_pending_updates=True)
-            logging.info("Старый вебхук удален (или не был установлен).")
-
-            # Затем устанавливаем новый.
-            await bot.set_webhook(url=BASE_WEBHOOK_URL, secret_token=WEBHOOK_SECRET)
-            logging.info(f"Вебхук успешно установлен на {BASE_WEBHOOK_URL}")
-        else:
-            logging.info(
-                f"Вебхук уже установлен на {BASE_WEBHOOK_URL}. Пропускаем установку."
-            )
+        # Принудительно устанавливаем/обновляем вебхук при каждом запуске.
+        # Это гарантирует, что у Telegram всегда актуальный secret_token,
+        # решая проблему рассинхронизации при перезапуске контейнера с новым секретом.
+        logging.info("Принудительная установка/обновление вебхука...")
+        await bot.set_webhook(
+            url=BASE_WEBHOOK_URL,
+            secret_token=WEBHOOK_SECRET,
+            drop_pending_updates=True,  # Сбрасываем обновления, которые могли скопиться, пока бот был выключен
+        )
+        logging.info(f"Вебхук успешно установлен/обновлен на {BASE_WEBHOOK_URL}")
 
     except TelegramAPIError as e:
         # Обрабатываем конкретные ошибки, которые могут возникнуть при установке вебхука
