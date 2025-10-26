@@ -380,11 +380,6 @@ services:
       retries: 3
       # Даем контейнеру 60 секунд на запуск, прежде чем healthcheck начнет считаться провальным.
       start_period: 60s
-    # Явно указываем DNS-серверы для надежного разрешения имен внутри контейнера.
-    # Это решает распространенную проблему "Temporary failure in name resolution".
-    dns:
-      - 8.8.8.8
-      - 1.1.1.1 # Резервный DNS-сервер
 YML
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${compose_file}"
   echo "docker-compose.yml файл создан."
