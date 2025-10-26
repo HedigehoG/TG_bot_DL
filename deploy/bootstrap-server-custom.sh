@@ -319,6 +319,9 @@ create_server_env_file() {
 # Секретные переменные хранятся в файле .env, который генерируется из GitHub Secrets.
 BOT_NAME=${BOT_NAME}
 
+# --- Web App (управляется этим скриптом) ---
+LISTEN_PORT=${LISTEN_PORT}
+
 # --- Webhook (управляется этим скриптом) ---
 WEBHOOK_HOST=${WEBHOOK_HOST_URL}
 WEBHOOK_SECRET=${webhook_secret_generated}
