@@ -74,6 +74,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }} # Используем теги из предыдущего шага
           labels: ${{ steps.meta.outputs.labels }}
+          # Отключаем кэш для принудительной переустановки зависимостей
+          no-cache: true
           # Включаем кэширование слоев Docker для ускорения последующих сборок
           cache-from: type=gha,scope=${{ github.workflow }}
           cache-to: type=gha,scope=${{ github.workflow }},mode=max

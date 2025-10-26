@@ -34,6 +34,24 @@ python wait-for-dns.py $HOSTS_TO_CHECK
 
 echo "Entrypoint: All checks passed. Starting application..."
 
-# Заменяем текущий процесс (скрипт) на команду, переданную в CMD Dockerfile (python i_m.py).
-# Это КЛЮЧЕВОЙ момент. Без 'exec' скрипт завершится, и контейнер остановится вместе с ним.
-exec "$@"
+# Логируем команду и защищаемся от пустого вызова
+echo "Entrypoint will exec the command: $@"
+if [ $# -eq 0 ]; then
+  echo "ERROR: no command provided to entrypoint (CMD empty). Exiting."
+  exit 1
+fi
+
+# Если нужно отладить поведение — можно установить KEEP_ALIVE_ON_EXIT=1.
+# В этом режиме команда будет выполнена, но при её завершении контейнер не будет падать,
+# а будет держаться (tail -f /dev/null) — это помогает изучить логи и состояние контейнера.
+if [ "${KEEP_ALIVE_ON_EXIT:-0}" = "1" ]; then
+  echo "DEBUG: KEEP_ALIVE_ON_EXIT=1 — running command and keeping container alive on exit for debugging"
+  "$@"
+  code=$?
+  echo "Command exited with code ${code}. Keeping container alive for inspection."
+  # Держим контейнер запущенным для возможности зайти внутрь и посмотреть логи
+  tail -f /dev/null
+else
+  # Заменяем текущий процесс на команду (стандартное поведение)
+  exec "$@"
+fi
