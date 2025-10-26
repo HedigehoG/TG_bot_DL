@@ -10,7 +10,7 @@ import random
 import threading
 import logging
 from dotenv import load_dotenv
-from urllib.parse import quote
+from urllib.parse import quote, quote_plus
 
 from instagrapi import Client  # Возвращаемся к синхронному instagrapi
 from instagrapi.exceptions import (  # Исключения из instagrapi
@@ -1804,6 +1804,11 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
         # 2. Кодируем в punycode.
         encoded_query = prepared_query.encode("idna").decode("ascii")
         search_url = config["base_url"].format(query_subdomain=encoded_query)
+    elif config["name"] == "mp3iq.net":
+        # Специальная логика для mp3iq.net: "Gorky Park - Stare" -> "gorky+park+stare"
+        prepared_query = re.sub(r'[^a-zA-Zа-яА-Я0-9\s]+', '', song_name.lower()).strip()
+        encoded_query = quote_plus(prepared_query)
+        search_url = config["base_url"] + config["search_path"].format(query=encoded_query)
     else:
         # Стандартная логика для остальных сайтов
         search_url = config["base_url"] + config["search_path"].format(
@@ -1945,7 +1950,7 @@ SEARCH_PROVIDER_CONFIGS = [
     {
         "name": "mp3iq.net",
         "base_url": "https://mp3iq.net",
-        "search_path": "/search?q={query}",  # Путь поиска изменился
+        "search_path": "/search/f/{query}/",
         "item_selector": "li.track",
         "extractor_func": _extractor_mp3iq,
         "headers": {**BASE_HEADERS, "Referer": "https://mp3iq.net/"},
