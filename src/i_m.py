@@ -516,11 +516,16 @@ async def process_request_queue(queue_key: str):
         try:
             message = await user_queues[queue_key].get()
 
-            # --- Логика ожидания 5 секунд ---
-            current_time = time.monotonic()
-            time_since_last_request = current_time - last_request_times[queue_key]
-            if time_since_last_request < 5:
-                await asyncio.sleep(5 - time_since_last_request)
+            # --- Логика троттлинга (задержки) ---
+            # Применяем задержку в 60 секунд только для гостевой очереди
+            if queue_key == "guest":
+                delay_seconds = 60
+                current_time = time.monotonic()
+                time_since_last_request = current_time - last_request_times.get(
+                    queue_key, 0
+                )
+                if time_since_last_request < delay_seconds:
+                    await asyncio.sleep(delay_seconds - time_since_last_request)
 
             # --- Обработка запроса ---
             try:
@@ -549,6 +554,8 @@ async def process_request_queue(queue_key: str):
                 )
                 await message.reply("Произошла ошибка при обработке вашего запроса.")
             finally:
+                # Обновляем время последнего запроса для ВСЕХ очередей,
+                # чтобы троттлинг корректно работал для следующего гостевого запроса.
                 last_request_times[queue_key] = time.monotonic()
                 user_queues[queue_key].task_done()
         except Exception as e:
@@ -2317,13 +2324,33 @@ async def on_shutdown(bot: Bot) -> None:
     logging.info("Соединение с Redis закрыто.")
 
 
+@web.middleware
+async def tarpit_middleware(request, handler):
+    # Эти пути мы не трогаем
+    allowed_paths = [WEBHOOK_PATH, "/health"]
+    if request.path in allowed_paths:
+        return await handler(request)
+
+    # Для всех остальных путей — долгая задержка
+    delay = random.uniform(20, 120)
+    logging.debug(
+        f"TAR PIT: Подозрительный запрос к {request.path} от {request.remote}. "
+        f"Включаю задержку: {delay:.2f} сек."
+    )
+    await asyncio.sleep(delay)
+
+    # После задержки можно вернуть ошибку
+    # 404 Not Found - это наиболее подходящий ответ для несуществующих ресурсов
+    return web.Response(text="Not Found", status=404)
+
+
 async def main():
     # Регистрируем обработчики жизненного цикла
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # Создаем приложение aiohttp
-    app = web.Application()
+    # Создаем приложение aiohttp с нашим новым middleware
+    app = web.Application(middlewares=[tarpit_middleware])
 
     # Создаем эндпоинт для healthcheck, который требует docker-compose.yml
     async def health_check(request: web.Request) -> web.Response:
