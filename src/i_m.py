@@ -79,6 +79,8 @@ client = (
 )  # the API is automatically loaded from the environement variable
 MODEL_20 = "gemini-2.0-flash"
 MODEL_25 = "gemini-2.5-flash"
+MODEL_3 = "gemini-3-flash-preview"
+MODEL_31L = "gemini-3.1-flash-lite-preview"
 MODEL_L = "gemini-flash-latest"  # Альтернативная модель, если нужна большая контекстная память
 
 # --- Webhook settings ---
@@ -248,21 +250,14 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Выход:** `{ "type": "chat", "content": "Привет бот! Как настроение?" }`'''
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_L,
+            model=MODEL_31L,
             contents=text,
-            config=GenerateContentConfig(
-                tools=[
-                    Tool(googleSearch=GoogleSearch()),
-                ],
-                # response_mime_type="application/json",
+            config=genai.types.GenerateContentConfig(
+                tools=[{"google_search": {}}],
                 system_instruction=prompt,
             ),
-        )  # response.text будет сырой строкой от Gemini
-
-        # Используем новую вспомогательную функцию для надежного парсинга JSON.
-        # Она обрабатывает пустые ответы, markdown-обертки и лишние данные.
+        ) 
         return parse_gemini_json_response(response.text, text)
-
     except Exception as e:
         # Ловим любые другие неожиданные ошибки при запросе к Gemini API.
         logging.error(f"Ошибка классификации AI Gemini (общая): {e}")
