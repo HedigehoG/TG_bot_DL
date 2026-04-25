@@ -292,11 +292,11 @@ setup_cleanup_script() {
   # Настройка sudo для безопасного запуска скрипта очистки из GitHub Actions
   # Убедимся, что директория для drop-in файлов sudo существует.
   mkdir -p /etc/sudoers.d
-  local sudoers_file="/etc/sudoers.d/99-${DEPLOY_USER}-cleanup"
+  local sudoers_file="/etc/sudoers.d/90-deploy-user-cleanup"
   echo "Предоставление прав на выполнение скрипта очистки через sudo..."
-  echo "${DEPLOY_USER} ALL=(ALL) NOPASSWD: ${cleanup_script_dest_path} ${DEPLOY_USER}" > "${sudoers_file}"
+  echo "${DEPLOY_USER} ALL=(ALL) NOPASSWD: ${cleanup_script_dest_path}" > "${sudoers_file}"
   chmod 0440 "${sudoers_file}"
-  CLEANUP_COMMAND_VAR="sudo ${cleanup_script_dest_path} ${DEPLOY_USER}"
+  CLEANUP_COMMAND_VAR="sudo ${cleanup_script_dest_path}"
   echo "Скрипт очистки настроен и размещен в ${cleanup_script_dest_path}."
 }
 

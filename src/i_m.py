@@ -250,7 +250,7 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Выход:** `{ "type": "chat", "content": "Привет бот! Как настроение?" }`'''
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_31L,
+            model=MODEL_25,
             contents=text,
             config=genai.types.GenerateContentConfig(
                 tools=[{"google_search": {}}],
@@ -537,10 +537,10 @@ async def process_request_queue(queue_key: str):
                     "instagram_link": handle_instagram_link,
                     "music_service_link": handle_music_service_link,  # Новый единый обработчик
                     "song": handle_song_search,
+                    "chat": handle_chat_request,  # Добавляем обработчик чата напрямую
                 }
-                handler = handlers.get(
-                    intent_type, lambda msg, _: handle_chat_request(msg, msg.text)
-                )
+                # Если тип не найден, по умолчанию считаем это чатом
+                handler = handlers.get(intent_type, handle_chat_request)
                 await handler(message, content)
 
             except Exception as e:
@@ -2253,13 +2253,13 @@ async def handle_callback_query(callback: types.CallbackQuery):
     await callback.answer()
 
 
-async def handle_chat_request(message: Message, text: str):
+async def handle_chat_request(message: Message, content: str):
     p_msg = await message.reply("🤖...")
     # Проверяем, что текст не пустой
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_25,
-            contents=text,
+            model=MODEL_20,
+            contents=content,
             config=genai.types.GenerateContentConfig(
                 tools=[{"google_search": {}}],
                 system_instruction="You are a helpful assistant with access to real-time Google Search. Use search when needed to answer accurately. Answer in a user question language",
