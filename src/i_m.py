@@ -74,9 +74,7 @@ if not BOT_TOKEN:
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     exit("GOOGLE_API_KEY is not set")
-client = (
-    genai.Client()
-)  # the API is automatically loaded from the environement variable
+client = genai.Client()
 MODEL_20 = "gemini-2.0-flash"
 MODEL_25 = "gemini-2.5-flash"
 MODEL_3 = "gemini-3-flash-preview"
@@ -250,10 +248,10 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Выход:** `{ "type": "chat", "content": "Привет бот! Как настроение?" }`'''
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_25,
+            model=MODEL_L,
             contents=text,
             config=genai.types.GenerateContentConfig(
-                tools=[{"google_search": {}}],
+                # tools=[{"google_search": {}}],
                 system_instruction=prompt,
             ),
         ) 
