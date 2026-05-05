@@ -1714,6 +1714,28 @@ def _extractor_muzika_fun(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     }
 
 
+def _extractor_sefon_pro(item: BeautifulSoup, base_url: str) -> Optional[dict]:
+    """Извлекает данные для сайта sefon.pro."""
+    artist_el = item.select_one(".artist_name")
+    title_el = item.select_one(".song_name")
+    duration_el = item.select_one(".duration .value")
+    # Ссылка на скачивание находится в data-url у кнопки play
+    link_el = item.select_one('.btns span[data-url]')
+
+    if not all([artist_el, title_el, duration_el, link_el]):
+        return None
+
+    # Ссылка может быть неполной, добавляем схему и хост
+    link = link_el.get("data-url")
+
+    return {
+        "link": link,
+        "artist": artist_el.text.strip(),
+        "title": title_el.text.strip(),
+        "duration": _parse_duration_mm_ss(duration_el.text),
+    }
+
+
 def _extractor_mp3iq(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     """Извлекает данные для сайта mp3iq.net (новая структура)."""
     # Извлекаем данные из атрибутов тега <li>
@@ -1938,6 +1960,15 @@ BASE_HEADERS = {
 
 SEARCH_PROVIDER_CONFIGS = [
     {
+        "name": "sefon.pro",
+        "base_url": "https://sefon.pro",
+        "search_path": "/search/?q={query}",
+        "item_selector": "div.mp3",
+        "extractor_func": _extractor_sefon_pro,
+        "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"},
+        "proxy": "russian",  # Требуется российский прокси
+    },
+    {
         "name": "muzika.fun",
         "base_url": "https://w1.muzika.fun",  # URL остался прежним
         "search_path": "/poisk/{query}",
@@ -1967,12 +1998,12 @@ SEARCH_PROVIDER_CONFIGS = [
     },
     {
         "name": "muzyet.com",
-        "base_url": "https://moc.muzyet.com",  # Домен изменился
-        "search_path": "/search/{query}",  # Путь изменился, и запрос форматируется по-другому
+        "base_url": "https://seven.muzyet.com",  # Домен снова изменился
+        "search_path": "/search/{query}",
         "item_selector": "div.song_list item",  # Селектор изменился
         "extractor_func": _extractor_muzyet,
         "headers": BASE_HEADERS,
-        "proxy": "russian",  # Используем российский прокси
+        "proxy": None,  # Прокси больше не нужен
     },
     {
         "name": "skysound7.com",
