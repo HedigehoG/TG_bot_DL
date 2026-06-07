@@ -26,7 +26,7 @@ import pyshorteners
 
 # pip install google-genai
 from google import genai
-from google.genai.types import Tool, GoogleSearch, GenerateContentConfig
+from google.genai import types as gtypes
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import CommandStart, Command
@@ -59,6 +59,10 @@ logging.basicConfig(
 # Устанавливаем более высокий уровень логирования для stem, чтобы убрать "шум"
 # про SocketClosed, который является нормальным поведением при закрытии соединения.
 logging.getLogger("stem").setLevel(logging.WARNING)
+# Понижаем уровень логирования для aiohttp, чтобы убрать "шум" от сканеров.
+# Ошибки (например, 500) все равно будут отображаться.
+logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
+logging.getLogger("aiohttp.web").setLevel(logging.WARNING)
 
 # --- Загрузка переменных окружения ---
 load_dotenv()
@@ -75,12 +79,24 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 if not GOOGLE_API_KEY:
     exit("GOOGLE_API_KEY is not set")
 client = genai.Client()
-MODEL_20 = "gemini-2.0-flash"
-MODEL_25 = "gemini-2.5-flash"
-MODEL_3 = "gemini-3-flash-preview"
-MODEL_31L = "gemini-3.1-flash-lite-preview"
-MODEL_L = "gemini-flash-latest"  # Альтернативная модель, если нужна большая контекстная память
 
+# --- Стандартизированные модели и конфигурации для Gemini ---
+MODEL_CLASSIFY = "gemini-flash-latest"  # Модель для классификации и извлечения данных
+MODEL_CHAT = "gemini-flash-lite-latest"  # Легкая модель для чата
+
+# Конфигурация для классификатора: нужен доступ к поиску и минимальный "thinking"
+GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
+    tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
+    thinking_config=gtypes.ThinkingConfig(
+        thinking_level="minimal", include_thoughts=False
+    ),
+)
+
+# Конфигурация для чата: нужен доступ к поиску
+GEMINI_CHAT_CONFIG = genai.types.GenerateContentConfig(
+    tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
+    system_instruction="You are a helpful assistant with access to real-time Google Search. Use search when needed to answer accurately. Answer in a user question language",
+)
 # --- Webhook settings ---
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
@@ -128,7 +144,6 @@ IG_DEVICE_CONFIG = {
 }
 
 # --- Код для активации отладки через debugpy ---
-# Чтобы включить отладку:
 # 1. Установите переменную окружения DEBUG_MODE=1 в вашем .env файле.
 # 2. Добавьте проброс порта 5678 в docker-compose.yml.
 # 3. Пересоздайте контейнер: docker-compose up -d --force-recreate
@@ -248,12 +263,9 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Выход:** `{ "type": "chat", "content": "Привет бот! Как настроение?" }`'''
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_L,
+            model=MODEL_CLASSIFY,
             contents=text,
-            config=genai.types.GenerateContentConfig(
-                # tools=[{"google_search": {}}],
-                system_instruction=prompt,
-            ),
+            config=GEMINI_CLASSIFY_CONFIG,
         ) 
         return parse_gemini_json_response(response.text, text)
     except Exception as e:
@@ -1998,12 +2010,12 @@ SEARCH_PROVIDER_CONFIGS = [
     },
     {
         "name": "muzyet.com",
-        "base_url": "https://seven.muzyet.com",  # Домен снова изменился
+        "base_url": "https://muzyet.com",  # Домен снова изменился
         "search_path": "/search/{query}",
         "item_selector": "div.song_list item",  # Селектор изменился
         "extractor_func": _extractor_muzyet,
         "headers": BASE_HEADERS,
-        "proxy": None,  # Прокси больше не нужен
+        "proxy": None,  # Сайт недоступен из РФ, используем Tor
     },
     {
         "name": "skysound7.com",
@@ -2287,12 +2299,9 @@ async def handle_chat_request(message: Message, content: str):
     # Проверяем, что текст не пустой
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_20,
+            model=MODEL_CHAT,
             contents=content,
-            config=genai.types.GenerateContentConfig(
-                tools=[{"google_search": {}}],
-                system_instruction="You are a helpful assistant with access to real-time Google Search. Use search when needed to answer accurately. Answer in a user question language",
-            ),
+            config=GEMINI_CHAT_CONFIG,
         )
         await p_msg.edit_text(response.text)
     except Exception as e:
