@@ -91,49 +91,18 @@ GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
         thinking_level="minimal", include_thoughts=False
     ),
      response_mime_type="application/json",
-     # Схема была переписана, чтобы соответствовать ожиданиям обработчиков.
-     # Теперь 'content' - это ОБЪЕКТ, а не массив, и его структура
-     # зависит от типа сообщения.
         response_schema=genai.types.Schema(
             type = genai.types.Type.OBJECT,
             required = ["type", "content"],
             properties = {
                 "type": genai.types.Schema(
                     type = genai.types.Type.STRING,
-                    description="Тип сообщения: instagram_link, music_service_link, song, или chat."
                 ),
                 "content": genai.types.Schema(
-                    type=genai.types.Type.OBJECT,
-                    description="Содержимое, структура которого зависит от типа.",
-                    # Определяем разные возможные структуры для 'content'
-                    one_of=[
-                        # Структура для instagram_link
-                        genai.types.Schema(
-                            type=genai.types.Type.OBJECT,
-                            properties={
-                                "shortcode": genai.types.Schema(type=genai.types.Type.STRING)
-                            }
-                        ),
-                        # Структура для music_service_link
-                        genai.types.Schema(
-                            type=genai.types.Type.OBJECT,
-                            properties={
-                                "service": genai.types.Schema(type=genai.types.Type.STRING),
-                                "track_id": genai.types.Schema(type=genai.types.Type.STRING, nullable=True)
-                            }
-                        ),
-                        # Структура для song
-                        genai.types.Schema(
-                            type=genai.types.Type.OBJECT,
-                            properties={
-                                "song": genai.types.Schema(type=genai.types.Type.STRING),
-                                "duration": genai.types.Schema(type=genai.types.Type.NUMBER)
-                            }
-                        ),
-                        # Для типа 'chat' content может быть просто строкой, но API требует объект.
-                        # Поэтому для чата будем ожидать объект с полем 'text'.
-                        # Это потребует небольшой доработки в коде ниже.
-                    ]
+                    type = genai.types.Type.OBJECT,
+                    items = genai.types.Schema(
+                        type = genai.types.Type.STRING,
+                    ),
                 ),
             },
         ),
@@ -147,7 +116,6 @@ GEMINI_CHAT_CONFIG = genai.types.GenerateContentConfig(
 # --- Webhook settings ---
 WEBHOOK_HOST = os.getenv("WEBHOOK_HOST")
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")
-
 # Путь для вебхука. Заменяем динамический путь на более простой статический,
 # чтобы упростить настройку реверс-прокси (например, Nginx).
 # ВАЖНО: Убедитесь, что ваш реверс-прокси (Nginx/Caddy/etc.) настроен на перенаправление запросов с этого пути на порт вашего бота.
@@ -274,10 +242,10 @@ async def classify_message_with_ai(text: str) -> dict:
     *   **Вход:** `https://music.yandex.com/album/123` (не трек)
     *   **Выход:** `{ "type": "chat", "content": "https://music.yandex.com/album/123" }`
 ### **Тип: `song`**
-*   **Условие:** Сообщение не является ссылкой, но содержит текст, похожий на название песни и/или имя исполнителя. Если не уверен, используй тип `chat`.
+*   **Условие:** Сообщение не является ссылкой, но содержит текст, похожий на название песни и/или имя исполнителя.
 *   **Действия:**
     1.  Используй поиск, чтобы найти наиболее релевантный трек, исправив возможные опечатки.
-    2.  Определи корректное название, исполнителя и длительность в секундах (число).
+    2.  Определи корректное название, исполнителя и длительность в секундах.
     3.  **Если поиск не дал уверенных результатов**, классифицируй сообщение как `chat`.
     4.  Если длительность неизвестна, используй `0`.
 *   **`content`:** Объект с ключами `song` и `duration`.
@@ -300,7 +268,7 @@ async def classify_message_with_ai(text: str) -> dict:
             model=MODEL_CHAT,
             contents=text,
             config=GEMINI_CLASSIFY_CONFIG,
-        )
+        ) 
         return parse_gemini_json_response(response.text, text)
     except Exception as e:
         # Ловим любые другие неожиданные ошибки при запросе к Gemini API.
@@ -352,12 +320,7 @@ def parse_gemini_json_response(raw_text: str, original_input_text: str) -> dict:
         logging.error(
             f"Неожиданная ошибка при парсинге JSON от Gemini: {e}. Оригинальный сырой ответ: '{raw_text}'"
         )
-        # Адаптация под новую схему: если парсинг не удался,
-        # возвращаем объект, который соответствует ожиданиям обработчика чата.
-        return {
-            "type": "chat",
-            "content": {"text": original_input_text},
-        }
+        return {"type": "chat", "content": original_input_text}
 
 
 def shorten_url(url):
@@ -586,7 +549,7 @@ async def process_request_queue(queue_key: str):
                     "instagram_link": handle_instagram_link,
                     "music_service_link": handle_music_service_link,  # Новый единый обработчик
                     "song": handle_song_search,
-                    "chat": handle_chat_request,
+                    "chat": handle_chat_request,  # Добавляем обработчик чата напрямую
                 }
                 # Если тип не найден, по умолчанию считаем это чатом
                 handler = handlers.get(intent_type, handle_chat_request)
@@ -2334,17 +2297,12 @@ async def handle_callback_query(callback: types.CallbackQuery):
 
 
 async def handle_chat_request(message: Message, content: str):
-    # Адаптация под новую схему: извлекаем текст из объекта content
-    if isinstance(content, dict):
-        text_to_process = content.get("text", str(content))
-    else:
-        text_to_process = str(content)
     p_msg = await message.reply("🤖...")
     # Проверяем, что текст не пустой
     try:
         response = await client.aio.models.generate_content(
             model=MODEL_CHAT,
-            contents=text_to_process,
+            contents=content,
             config=GEMINI_CHAT_CONFIG,
         )
         await p_msg.edit_text(response.text)
