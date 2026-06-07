@@ -86,15 +86,31 @@ MODEL_CHAT = "gemini-flash-lite-latest"  # Легкая модель для ча
 
 # Конфигурация для классификатора: нужен доступ к поиску и минимальный "thinking"
 GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
-    tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
+    #tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
     thinking_config=gtypes.ThinkingConfig(
         thinking_level="minimal", include_thoughts=False
     ),
+     response_mime_type="application/json",
+        response_schema=genai.types.Schema(
+            type = genai.types.Type.OBJECT,
+            required = ["type", "content"],
+            properties = {
+                "type": genai.types.Schema(
+                    type = genai.types.Type.STRING,
+                ),
+                "content": genai.types.Schema(
+                    type = genai.types.Type.ARRAY,
+                    items = genai.types.Schema(
+                        type = genai.types.Type.STRING,
+                    ),
+                ),
+            },
+        ),
 )
 
 # Конфигурация для чата: нужен доступ к поиску
 GEMINI_CHAT_CONFIG = genai.types.GenerateContentConfig(
-    tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
+    #tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
     system_instruction="You are a helpful assistant with access to real-time Google Search. Use search when needed to answer accurately. Answer in a user question language",
 )
 # --- Webhook settings ---
@@ -190,31 +206,15 @@ async def classify_message_with_ai(text: str) -> dict:
     # Он теперь представляет собой чистую "системную инструкцию" для модели Gemini.
     # f-строка используется для удобного встраивания примеров JSON.
     # Внешние {} - для f-строки, сдвоенные внутренние {{}} - для литеральных скобок в итоговой строке.
-    prompt = '''### **Оптимизированный промпт для ИИ**
+    prompt = '''Задача - определить тип сообщения
 
-**## 1. Основная задача и роль**
-Твоя роль — высокоточный классификатор сообщений для музыкального бота. Твоя единственная задача — проанализировать входящее сообщение и вернуть **один валидный JSON-объект** без каких-либо дополнительных пояснений или текста.
+допустимые типы
+1.  **ссылка Instagram.**
+2.  **ссылка музыкального сервиса.**
+3.  **название песни/исполнителя.**
+4.  **Просто диалог - чат.**
 
-**## 2. Формат вывода**
-Ответ всегда должен быть JSON-объектом со строго двумя ключами: `type` и `content`.
-```json
-{
-  "type": "ТИП_СООБЩЕНИЯ",
-  "content": "ДАННЫЕ"
-}
-```
-
-**## 3. Ключевые принципы и порядок анализа**
-Всегда следуй этому порядку приоритетов при анализе:
-
-1.  **Проверка на ссылку Instagram.**
-2.  **Проверка на ссылку музыкального сервиса.**
-3.  **Анализ на предмет названия песни/исполнителя.**
-4.  **Если ничего не подошло — это `chat`**.
-
-**Принцип безопасного ответа:** Если ты не уверен или данные некорректны (например, поиск не дал результатов), всегда выбирай самый безопасный тип — `chat`.
-
-**## 4. Детальные правила классификации**
+**## Детальные правила классификации**
 
 ### **Тип: `instagram_link`**
 *   **Условие:** Сообщение — это валидная ссылка на пост в Instagram (содержит `instagram.com/p/` или `instagram.com/reel/`).
