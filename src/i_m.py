@@ -85,24 +85,24 @@ MODEL_CLASSIFY = "gemini-flash-latest"  # Модель для классифик
 MODEL_CHAT = "gemini-flash-lite-latest"  # Легкая модель для чата
 
 # Конфигурация для классификатора: нужен доступ к поиску и минимальный "thinking"
-GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(    
+GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
     #tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
     thinking_config=gtypes.ThinkingConfig(
         thinking_level="minimal", include_thoughts=False
     ),
-     response_mime_type="application/json",
-        response_schema=genai.types.Schema(
-            type = genai.types.Type.OBJECT,
-            required = ["type", "content"],
-            properties = {
-                "type": genai.types.Schema(
-                    type = genai.types.Type.STRING,
-                ),
-                "content": genai.types.Schema(
-                    type = genai.types.Type.STRING,
-                ),
-            },
-        ),
+    response_mime_type="application/json",
+    # response_schema=genai.types.Schema(
+    #         type = genai.types.Type.OBJECT,
+    #         required = ["type", "content"],
+    #         properties = {
+    #             "type": genai.types.Schema(
+    #                 type = genai.types.Type.STRING,
+    #             ),
+    #             "content": genai.types.Schema(
+    #                 type = genai.types.Type.STRING,
+    #             ),
+    #         },
+    #     ),
 )
 
 # Конфигурация для чата: нужен доступ к поиску
