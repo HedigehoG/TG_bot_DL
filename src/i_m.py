@@ -85,7 +85,7 @@ MODEL_CLASSIFY = "gemini-flash-latest"  # Модель для классифик
 MODEL_CHAT = "gemini-flash-lite-latest"  # Легкая модель для чата
 
 # Конфигурация для классификатора: нужен доступ к поиску и минимальный "thinking"
-GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
+GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(    
     #tools=[gtypes.Tool(google_search=gtypes.GoogleSearch())],
     thinking_config=gtypes.ThinkingConfig(
         thinking_level="minimal", include_thoughts=False
@@ -261,9 +261,11 @@ async def classify_message_with_ai(text: str) -> dict:
 *   **Пример:**
     *   **Вход:** "Привет бот! Как настроение?"
     *   **Выход:** `{ "type": "chat", "content": "Привет бот! Как настроение?" }`'''
+
+    GEMINI_CLASSIFY_CONFIG.system_instruction=prompt
     try:
         response = await client.aio.models.generate_content(
-            model=MODEL_CLASSIFY,
+            model=MODEL_CHAT,
             contents=text,
             config=GEMINI_CLASSIFY_CONFIG,
         ) 
