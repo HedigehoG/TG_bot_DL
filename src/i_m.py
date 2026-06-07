@@ -99,10 +99,7 @@ GEMINI_CLASSIFY_CONFIG = genai.types.GenerateContentConfig(
                     type = genai.types.Type.STRING,
                 ),
                 "content": genai.types.Schema(
-                    type = genai.types.Type.OBJECT,
-                    items = genai.types.Schema(
-                        type = genai.types.Type.STRING,
-                    ),
+                    type = genai.types.Type.STRING,
                 ),
             },
         ),
