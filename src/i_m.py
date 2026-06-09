@@ -17,7 +17,8 @@ from instagrapi.exceptions import (  # Исключения из instagrapi
     LoginRequired,
     ChallengeRequired,
     BadCredentials,
-    BadPassword,
+    BadPassword, # BadPassword,
+    TwoFactorRequired, # TwoFactorRequired, # Добавлен импорт для обработки 2FA
     PrivateError,
     ClientError,  # ClientError также есть в instagrapi
 )
@@ -131,6 +132,7 @@ WEB_SERVER_PORT = int(os.getenv("LISTEN_PORT", 8080))
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+TOTP_SEED = os.getenv("IG_TOTP_SEED")
 
 # --- Tor ---
 TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
@@ -582,7 +584,8 @@ async def get_instagram_client(
     session_data: dict | None = None,
     username: str | None = None,
     password: str | None = None,
-) -> Client | None:
+    verification_code: str | None = None, # Добавлен параметр для 2FA кода
+) -> Client | None: # Изменен тип возвращаемого значения на Optional[Client]
     # --- Попытка 0: Получить клиент из кэша в памяти (потокобезопасно) ---
     cached_client = None
     with INSTA_CLIENTS_LOCK:
@@ -619,7 +622,7 @@ async def get_instagram_client(
         cl.get_timeline_feed()
         return cl
 
-    def _login_with_password(proxy_url):
+    def _login_with_password(proxy_url, current_verification_code):
         cl = Client()
         cl.delay_range = [2, 6]
         cl.set_timezone_offset(TIMEZONE_OFFSET * 3600)
@@ -627,7 +630,17 @@ async def get_instagram_client(
             cl.set_proxy(proxy_url)
         cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
         cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
-        cl.login(username, password)
+
+        # Если передан 2FA код, используем его. Иначе пробуем сгенерировать из TOTP_SEED.
+        if current_verification_code:
+            cl.login(username, password, verification_code=current_verification_code)
+            logging.info("Успешно зашли с 2FA (переданный код)!")
+        elif TOTP_SEED:
+            gen_verification_code = cl.totp_generate_code(TOTP_SEED)
+            cl.login(username, password, verification_code=gen_verification_code)
+            logging.info("Успешно зашли с 2FA (автоматический TOTP)!")
+        else:
+            cl.login(username, password)
         return cl
 
     # Попытка 1: Восстановить сессию из Redis
@@ -642,11 +655,13 @@ async def get_instagram_client(
 
     # Попытка 2: Войти по логину и паролю (если восстановление по сессии не удалось)
     if not new_client and username and password:
+        # Передаем verification_code в функцию логина по паролю
+        # Исправлена синтаксическая ошибка в блоке except
         try:
-            new_client = await asyncio.to_thread(_login_with_password, proxy)
+            new_client = await asyncio.to_thread(_login_with_password, proxy, verification_code)
             logging.info(f"✅ Успешный вход по логину/паролю для user {user_id}")
-        except (ChallengeRequired, BadPassword) as e:
-            logging.warning(f"❗ Ошибка входа для user {user_id}: {e}")
+        except (TwoFactorRequired, ChallengeRequired, BadPassword) as e:
+            logging.warning(f"❗ Ошибка входа для user {user_id}: {type(e).__name__} - {e}")
         except Exception as e:
             logging.error(f"❌ Неизвестная ошибка логина для user {user_id}: {e}")
 
@@ -750,25 +765,38 @@ async def save_session_to_redis(user_id, session_data_dict):
 @dp.message(Command("igpass"))
 async def cmd_igpass(message: Message):
     user_id = str(message.from_user.id)
-    params = message.text.split()[1:]
-    if len(params) != 2:
+    parts = message.text.split(maxsplit=3) # Разделяем на 4 части: /igpass, логин, пароль, (опционально) 2fa
+    
+    if len(parts) < 3 or len(parts) > 4: # Если не 3 или 4 части, формат неверный
         await message.answer(
-            "❌ **Неверный формат.**\nИспользуйте: `/igpass <логин> <пароль>`",
+            "❌ **Неверный формат.**\n"
+            "Используйте: `/igpass <логин> <пароль> [2fa_код]`\n"
+            "Например: `/igpass my_insta_user my_secret_pass 123456`",
             parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    username, password = params
-    await message.answer("⏳ Авторизуюсь...")
+    username = parts[1]
+    password = parts[2]
+    verification_code = parts[3] if len(parts) == 4 else None # Получаем 2fa_код, если он есть
+
+    await message.answer(f"⏳ Авторизуюсь как {username}...")
 
     session_data = await load_session_from_redis(user_id)
-    cl = await get_instagram_client(user_id, session_data, username, password)
+    cl = await get_instagram_client(
+        user_id, session_data, username, password, verification_code=verification_code
+    )
 
     if cl:
-        new_settings = await asyncio.to_thread(cl.get_settings)
-        await save_session_to_redis(user_id, new_settings)
+        # После успешного логина, сохраняем новую сессию
+        try:
+            new_settings = await asyncio.to_thread(cl.get_settings)
+            await save_session_to_redis(user_id, new_settings)
+        except Exception as e:
+            logging.error(f"Ошибка при сохранении сессии Instagram в Redis для user {user_id}: {e}")
         await message.answer("✅ Авторизация успешна!")
     else:
+        # Более конкретное сообщение об ошибке, если логин не удался
         await message.answer(
             "❌ Не удалось авторизоваться. Проверь логин/пароль или пройди challenge через Instagram."
         )
@@ -791,8 +819,6 @@ async def cmd_iglogout(message: Message):
 
 
 # --- ОБРАБОТЧИКИ --------------------------------------------------------------------------
-
-
 # --- Обработчик Instagram-ссылок ---
 async def handle_instagram_link(
     message: Message, content: dict
