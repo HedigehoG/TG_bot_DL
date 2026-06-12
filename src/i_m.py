@@ -132,7 +132,6 @@ WEB_SERVER_PORT = int(os.getenv("LISTEN_PORT", 8080))
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-TOTP_SEED = os.getenv("IG_TOTP_SEED")
 
 # --- Tor ---
 TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
@@ -634,11 +633,7 @@ async def get_instagram_client(
         # Если передан 2FA код, используем его. Иначе пробуем сгенерировать из TOTP_SEED.
         if current_verification_code:
             cl.login(username, password, verification_code=current_verification_code)
-            logging.info("Успешно зашли с 2FA (переданный код)!")
-        elif TOTP_SEED:
-            gen_verification_code = cl.totp_generate_code(TOTP_SEED)
-            cl.login(username, password, verification_code=gen_verification_code)
-            logging.info("Успешно зашли с 2FA (автоматический TOTP)!")
+            logging.info("Успешно зашли с 2FA-кодом!")
         else:
             cl.login(username, password)
         return cl
