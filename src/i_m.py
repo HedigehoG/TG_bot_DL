@@ -152,6 +152,7 @@ IG_DEVICE_CONFIG = {
             "model": "SM-S918B",
             "device": "d2s",
             "cpu": "qcom",
+            "version_code": "674228472",
             "language": "en_US",  # Сменим язык на en_US для большей "незаметности"
         },
     }
