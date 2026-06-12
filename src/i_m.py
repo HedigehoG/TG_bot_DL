@@ -139,7 +139,7 @@ TOR_HOST = os.getenv("TOR_HOST", "127.0.0.1")
 
 # --- insta dev ---
 IG_DEVICE_CONFIG = {
-    "my_config": {
+    "my_config_old": {
         # Новые параметры от Samsung Galaxy S23 Ultra для имитации другого устройства
         "user_agent": "Instagram 360.0.0.30.109 Android (33/13; 640dpi; 1440x3088; samsung; SM-S918B; d2s; qcom; en_US; 674228472)",
         "device": {
@@ -615,7 +615,7 @@ async def get_instagram_client(
 
     def _login_with_session(proxy_url):
         cl = Client()
-        cl.delay_range = [2, 4]
+        cl.delay_range = [1, 3]
         if proxy_url:
             cl.set_proxy(proxy_url)
         cl.set_settings(session_data)
@@ -624,12 +624,12 @@ async def get_instagram_client(
 
     def _login_with_password(proxy_url, current_verification_code):
         cl = Client()
-        cl.delay_range = [2, 6]
-        cl.set_timezone_offset(TIMEZONE_OFFSET * 3600)
+        cl.delay_range = [1, 3]
+        # cl.set_timezone_offset(TIMEZONE_OFFSET * 3600)
         if proxy_url:
             cl.set_proxy(proxy_url)
-        cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
-        cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
+        # cl.set_user_agent(IG_DEVICE_CONFIG["my_config"]["user_agent"])
+        # cl.set_device(IG_DEVICE_CONFIG["my_config"]["device"])
 
         # Если передан 2FA код, используем его. Иначе пробуем сгенерировать из TOTP_SEED.
         if current_verification_code:
