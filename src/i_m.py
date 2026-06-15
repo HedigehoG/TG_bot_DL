@@ -1797,14 +1797,13 @@ def _extractor_mp3iq(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 def _extractor_mp3party(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     """Извлекает данные для сайта mp3party.net."""
     user_panel = item.find("div", class_="track__user-panel")
-    duration_div = item.find("div", class_="track__info-item")
-    link_btn = item.find("div", class_="play-btn")
+    duration_div = item.select_one(".track__info-item") # Более точный селектор
 
-    if not all([user_panel, duration_div, link_btn]):
+    if not all([user_panel, duration_div]):
         return None
 
     return {
-        "link": link_btn.get("href"),
+        "link": user_panel.get("data-js-url"), # Ссылка теперь в data-js-url
         "artist": user_panel.get("data-js-artist-name"),
         "title": user_panel.get("data-js-song-title"),
         "duration": _parse_duration_mm_ss(duration_div.text),
@@ -1890,8 +1889,15 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
         connector = ProxyConnector.from_url(proxy_url)
         session_args["connector"] = connector
 
-    # --- Логика запроса с ретраями для Tor ---
-    max_retries = 3 if proxy_type == "tor" else 1
+    # --- Логика запроса с ретраями ---
+    # Для Tor и sefon.pro (из-за проблем с DPI) делаем несколько попыток.
+    if proxy_type == "tor":
+        max_retries = 3
+    elif config["name"] == "sefon.pro":
+        max_retries = 3  # Специально для "пробива" DPI
+    else:
+        max_retries = 1
+
     soup = None
     # Создаем сессию один раз перед циклом ретраев
     async with aiohttp.ClientSession(**session_args) as session:
@@ -1943,6 +1949,7 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
                 aiohttp.ClientConnectorError,
                 aiohttp.ServerDisconnectedError,
                 asyncio.TimeoutError,
+                aiohttp.ClientOSError,  # Добавлено для обработки ошибок DPI/ТСПУ
             ) as e:
                 logging.error(
                     f"Попытка {attempt + 1}/{max_retries}: Ошибка соединения при запросе {search_url}: {e}"
@@ -1959,8 +1966,10 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
                     logging.info("Меняю IP Tor и жду...")
                     await check_tor_connection(renew=True)
                     await asyncio.sleep(3)
+                elif config["name"] == "sefon.pro":
+                    await asyncio.sleep(0.5)  # Короткая пауза для быстрых повторных попыток
                 else:
-                    await asyncio.sleep(1)  # Небольшая пауза для других типов ошибок
+                    await asyncio.sleep(1)
 
     if not soup:
         return None

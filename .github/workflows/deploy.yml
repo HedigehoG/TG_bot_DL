@@ -125,12 +125,12 @@ jobs:
             echo "2. Ensuring healthcheck is enabled and adjusting interval"
             # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
             sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
-            # Увеличиваем интервал проверки до 5 минут, чтобы уменьшить количество логов.
+            # Увеличиваем интервал проверки до 1 часа, чтобы уменьшить количество логов в продакшене.
             # Если строка 'interval:' уже есть, заменяем ее. Если нет - добавляем после строки 'test:'.
             if grep -q '^\s*interval:' docker-compose.yml; then
-              sed -i -E 's/^\s*interval:.*/      interval: 1h/' docker-compose.yml
+              sed -i -E 's/^\s*interval:.*/      interval: 1h/' docker-compose.yml # Устанавливаем 1 час
             else
-              sed -i -E '/^\s*test:.*/a \      interval: 1h' docker-compose.yml
+              sed -i -E '/^\s*test:.*/a \      interval: 1h' docker-compose.yml # Добавляем 1 час
             fi
 
             echo "3. Ensuring production memory limits"
