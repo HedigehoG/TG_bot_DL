@@ -2038,15 +2038,15 @@ SEARCH_PROVIDER_CONFIGS = [
         "headers": {**BASE_HEADERS, "Referer": "https://mp3party.net/"},
         "proxy": "russian",  # Используем российский прокси
     },
-    {
-        "name": "muzyet.com",
-        "base_url": "https://muzyet.com",  # Домен снова изменился
-        "search_path": "/search/{query}",
-        "item_selector": "div.song_list item",  # Селектор изменился
-        "extractor_func": _extractor_muzyet,
-        "headers": BASE_HEADERS,
-        "proxy": None,  # Сайт недоступен из РФ, используем Tor
-    },
+    # {
+    #     "name": "muzyet.com",
+    #     "base_url": "https://muzyet.com",  # Домен снова изменился
+    #     "search_path": "/search/{query}",
+    #     "item_selector": "div.song_list item",  # Селектор изменился
+    #     "extractor_func": _extractor_muzyet,
+    #     "headers": BASE_HEADERS,
+    #     "proxy": None,  # Сайт недоступен из РФ, используем Tor
+    # },
     {
         "name": "skysound7.com",
         # URL теперь является шаблоном, куда будет подставлен punycode-запрос
