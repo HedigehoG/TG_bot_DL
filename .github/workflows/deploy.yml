@@ -117,27 +117,6 @@ jobs:
               set +o allexport
             fi
             
-            echo "--- Ensuring production mode ---"
-            echo "1. Ensuring restart policy is 'unless-stopped'"
-            # Устанавливаем политику перезапуска для продакшена.
-            sed -i -E 's/^\s*restart:.*/    restart: unless-stopped/' docker-compose.yml
-
-            echo "2. Ensuring healthcheck is enabled and adjusting interval"
-            # Восстанавливаем команду healthcheck. Используем '@' как разделитель, чтобы избежать конфликта с запятыми в команде.
-            sed -i -E 's@^\s*test:.*@      test: ["CMD", "curl", "-f", "http://localhost:${LISTEN_PORT}/health"]@' docker-compose.yml
-            # Увеличиваем интервал проверки до 1 часа, чтобы уменьшить количество логов в продакшене.
-            # Если строка 'interval:' уже есть, заменяем ее. Если нет - добавляем после строки 'test:'.
-            if grep -q '^\s*interval:' docker-compose.yml; then
-              sed -i -E 's/^\s*interval:.*/      interval: 1h/' docker-compose.yml # Устанавливаем 1 час
-            else
-              sed -i -E '/^\s*test:.*/a \      interval: 1h' docker-compose.yml # Добавляем 1 час
-            fi
-
-            echo "3. Ensuring production memory limits"
-            # Возвращаем стандартные лимиты памяти для продакшена.
-            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 200m/' docker-compose.yml
-            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 400m/' docker-compose.yml
-
             # Определяем, какой образ разворачивать.
             # При deploy_only используется github.repository, который может содержать заглавные буквы.
             # Имя репозитория в Docker/GHCR должно быть в нижнем регистре, поэтому приводим его.
@@ -154,10 +133,10 @@ jobs:
             fi
 
             echo "--- Pulling new image"
-            docker compose pull
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
 
             echo "--- Restarting container"
-            docker compose up -d --force-recreate --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --force-recreate --remove-orphans
 
             echo "--- Waiting for container to initialize..."
             sleep 15
@@ -234,28 +213,14 @@ jobs:
             
             echo "--- Enabling debug mode ---"
 
-            echo "1. Adding DEBUG_MODE=1 to .env file"
-            # Удаляем старую строку, если она есть, и добавляем новую для идемпотентности.
-            grep -v '^DEBUG_MODE=' .env > .env.tmp && mv .env.tmp .env
-            echo "DEBUG_MODE=1" >> .env
-
-            echo "2. Setting restart policy to 'no'"
-            # Отключаем автоматический перезапуск, чтобы можно было изучить логи в случае сбоя.
-            sed -i -E 's/^\s*restart:.*/    restart: "no"/' docker-compose.yml
-
-            echo "3. Disabling healthcheck for debugging"
-            # Заменяем реальную проверку на команду, которая всегда успешна.
-            # Это предотвратит остановку контейнера, пока он ожидает подключения отладчика.
-            sed -i -E 's/^\s*test:.*/      test: ["CMD", "true"]/' docker-compose.yml
-
-            echo "4. Increasing memory limit for debugging"
-            # Увеличиваем лимит памяти, т.к. debugpy добавляет накладные расходы,
-            # и OOM killer может остановить контейнер.
-            sed -i -E 's/^\s*mem_limit:.*/    mem_limit: 512m/' docker-compose.yml
-            sed -i -E 's/^\s*memswap_limit:.*/    memswap_limit: 1g/' docker-compose.yml
+            echo "1. Creating/updating .env file for debug mode"
+            # Добавляем DEBUG_MODE=1 в .env, сохраняя остальное содержимое
+            (grep -v '^DEBUG_MODE=' .env 2>/dev/null || true) > .env.tmp
+            echo "DEBUG_MODE=1" >> .env.tmp
+            mv .env.tmp .env
 
             echo "5. Restarting container with new settings"
-            docker compose up -d --force-recreate --remove-orphans
+            docker compose -f docker-compose.yml -f docker-compose.debug.yml up -d --force-recreate --remove-orphans
 
             echo "--- Debug mode enabled. Waiting for container... ---"
             sleep 15

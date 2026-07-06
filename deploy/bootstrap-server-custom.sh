@@ -359,7 +359,6 @@ services:
     env_file:
       - .env.server # Статичная конфигурация сервера
       - .env        # Секреты, управляемые через CI/CD
-    restart: unless-stopped
     # Настройка ротации логов, чтобы они не занимали все место на диске.
     # Храним 3 файла логов по 10MB каждый.
     logging:
@@ -367,19 +366,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-    # Ограничиваем ресурсы для защиты сервера от перегрузки.
-    mem_limit: 200m
-    memswap_limit: 400m
-    healthcheck:
-      # Проверяем, отвечает ли веб-сервер внутри контейнера.
-      # ВАЖНО: для работы healthcheck в вашем Docker-образе должен быть установлен curl,
-      # а само приложение должно отвечать на GET-запросы по пути /health.
-      test: ["CMD", "curl", "-f", "http://localhost:\${LISTEN_PORT}/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      # Даем контейнеру 60 секунд на запуск, прежде чем healthcheck начнет считаться провальным.
-      start_period: 60s
 YML
   chown "${DEPLOY_USER}:${DEPLOY_USER}" "${compose_file}"
   echo "docker-compose.yml файл создан."

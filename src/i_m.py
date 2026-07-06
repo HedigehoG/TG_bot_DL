@@ -1736,7 +1736,7 @@ def _parse_duration_mm_ss(duration_str: str) -> int:
 
 def _extractor_muzika_fun(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     """Извлекает данные для сайта muzika.fun."""
-    link_element = item.select_one("[data-url]")
+    link_element = item.select_one("div.idx13[data-url]") # Ищем data-url именно в div с классом idx13
     if not link_element:
         return None
     return {
@@ -1752,8 +1752,8 @@ def _extractor_sefon_pro(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     artist_el = item.select_one(".artist_name")
     title_el = item.select_one(".song_name")
     duration_el = item.select_one(".duration .value")
-    # Ссылка на скачивание находится в data-url у кнопки play
-    link_el = item.select_one('.btns span[data-url]')
+    # Ссылка на скачивание находится в data-url у первого span внутри div.btns
+    link_el = item.select_one('div.btns > span[data-url]')
 
     if not all([artist_el, title_el, duration_el, link_el]):
         return None
@@ -1796,14 +1796,14 @@ def _extractor_mp3iq(item: BeautifulSoup, base_url: str) -> Optional[dict]:
 
 def _extractor_mp3party(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     """Извлекает данные для сайта mp3party.net."""
-    user_panel = item.find("div", class_="track__user-panel")
-    duration_div = item.select_one(".track__info-item") # Более точный селектор
+    user_panel = item.select_one("div.track__user-panel")
+    duration_div = item.select_one(".track__info-item")  # Более точный селектор
 
     if not all([user_panel, duration_div]):
         return None
 
     return {
-        "link": user_panel.get("data-js-url"), # Ссылка теперь в data-js-url
+        "link": user_panel.get("data-js-url"),  # Ссылка теперь в data-js-url
         "artist": user_panel.get("data-js-artist-name"),
         "title": user_panel.get("data-js-song-title"),
         "duration": _parse_duration_mm_ss(duration_div.text),
@@ -2008,7 +2008,7 @@ SEARCH_PROVIDER_CONFIGS = [
         "item_selector": "div.mp3",
         "extractor_func": _extractor_sefon_pro,
         "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"},
-        "proxy": "russian",  # Требуется российский прокси
+        "proxy": None,  # Больше не требуется прокси
     },
     {
         "name": "muzika.fun",
@@ -2033,20 +2033,11 @@ SEARCH_PROVIDER_CONFIGS = [
         "name": "mp3party.net",
         "base_url": "https://mp3party.net",
         "search_path": "/search?q={query}",
-        "item_selector": "div.track-item",  # Селектор изменился
+        "item_selector": "div.track-item",
         "extractor_func": _extractor_mp3party,
         "headers": {**BASE_HEADERS, "Referer": "https://mp3party.net/"},
         "proxy": "russian",  # Используем российский прокси
     },
-    # {
-    #     "name": "muzyet.com",
-    #     "base_url": "https://muzyet.com",  # Домен снова изменился
-    #     "search_path": "/search/{query}",
-    #     "item_selector": "div.song_list item",  # Селектор изменился
-    #     "extractor_func": _extractor_muzyet,
-    #     "headers": BASE_HEADERS,
-    #     "proxy": None,  # Сайт недоступен из РФ, используем Tor
-    # },
     {
         "name": "skysound7.com",
         # URL теперь является шаблоном, куда будет подставлен punycode-запрос
