@@ -2267,6 +2267,15 @@ async def handle_song_search(message: Message, song_obj: dict):
 
 
 async def download_audio(url):
+    # --- Централизованная очистка и валидация URL ---
+    if not url or not isinstance(url, str):
+        logging.error(f"Ошибка скачивания: URL пуст или имеет неверный тип ({type(url)}).")
+        return None
+
+    # Удаляем все, что идет после символа '#', чтобы отсечь мусорные данные.
+    cleaned_url = url.split("#")[0]
+    url = cleaned_url
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=10) as response:
