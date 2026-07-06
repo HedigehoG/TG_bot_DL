@@ -56,7 +56,12 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/mai
     -   Перейдите в `Настройки (Settings)` вашего репозитория -> `Secrets and variables` -> `Actions`.
     -   Нажмите `New repository secret` и добавьте все секреты, которые вывел скрипт: `SSH_HOST`, `SSH_USER`, `SSH_PRIVATE_KEY`, `CLEANUP_COMMAND`.
     -   Добавьте еще один секрет `BOT_TOKEN` со значением токена вашего бота, полученного от @BotFather.
-    -   Добавьте секрет `GOOGLE_API_KEY` со значением вашего ключа от Google AI Studio.
+    -   Создайте мультистрочный секрет `OTHER` и добавьте в него остальные переменные в формате `КЛЮЧ=ЗНАЧЕНИЕ`, каждая с новой строки. Например:
+      ```
+      GOOGLE_API_KEY=AIzaSy...XYZ
+      TG_IDS=12345678,87654321
+      RUSSIAN_PROXIES=http://user:pass@host:port,...
+      ```
 
 2.  **Запустите первый деплой**:
     -   Сделайте любой коммит и отправьте его в ветку `main`.

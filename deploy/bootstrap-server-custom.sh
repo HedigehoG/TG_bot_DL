@@ -371,6 +371,52 @@ YML
   echo "docker-compose.yml файл создан."
 }
 
+create_docker_compose_override_files() {
+  local prod_file="${WORK_DIR}/docker-compose.prod.yml"
+  local debug_file="${WORK_DIR}/docker-compose.debug.yml"
+
+  if [ -f "${prod_file}" ] && [ -f "${debug_file}" ]; then
+    echo "Файлы docker-compose.prod.yml и docker-compose.debug.yml уже существуют. Пропускаем."
+    return
+  fi
+
+  echo "Создание файлов переопределения docker-compose..."
+
+  # --- Production Override ---
+  cat > "${prod_file}" <<YML
+services:
+  bot:
+    restart: unless-stopped
+    mem_limit: 200m
+    memswap_limit: 400m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:\${LISTEN_PORT}/health"]
+      interval: 1h # Увеличенный интервал для продакшена
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+YML
+  chown "${DEPLOY_USER}:${DEPLOY_USER}" "${prod_file}"
+
+  # --- Debug Override ---
+  cat > "${debug_file}" <<YML
+services:
+  bot:
+    restart: "no"
+    # Увеличиваем лимит памяти, т.к. debugpy добавляет накладные расходы
+    mem_limit: 512m
+    memswap_limit: 1g
+    healthcheck:
+      # Отключаем healthcheck в режиме отладки, чтобы контейнер не перезапускался,
+      # пока мы ждем подключения отладчика.
+      test: ["CMD", "true"]
+YML
+  chown "${DEPLOY_USER}:${DEPLOY_USER}" "${debug_file}"
+
+  echo "Файлы docker-compose.prod.yml и docker-compose.debug.yml созданы."
+}
+
+
 display_caddy_config() {
   # Извлекаем только хост из полного URL
   local hostname
@@ -462,6 +508,7 @@ main() {
   setup_cleanup_script
   create_server_env_file
   create_docker_compose_file
+  create_docker_compose_override_files
   print_summary
 }
 
