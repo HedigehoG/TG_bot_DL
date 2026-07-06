@@ -2012,15 +2012,15 @@ BASE_HEADERS = {
 }
 
 SEARCH_PROVIDER_CONFIGS = [
-    {
-        "name": "sefon.pro",
-        "base_url": "https://sefon.pro",
-        "search_path": "/search/?q={query}",
-        "item_selector": "div.mp3",
-        "extractor_func": _extractor_sefon_pro,
-        "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"}, # Добавляем Referer, чтобы обойти ошибку 403 Forbidden
-        "proxy": "russian",  # Теперь требуется российский прокси
-    },
+    # {
+    #     "name": "sefon.pro",
+    #     "base_url": "https://sefon.pro",
+    #     "search_path": "/search/?q={query}",
+    #     "item_selector": "div.mp3",
+    #     "extractor_func": _extractor_sefon_pro,
+    #     "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"}, # Добавляем Referer, чтобы обойти ошибку 403 Forbidden
+    #     "proxy": "russian",  # Теперь требуется российский прокси
+    # },
     {
         "name": "muzika.fun",
         "base_url": "https://w1.muzika.fun",  # URL остался прежним
