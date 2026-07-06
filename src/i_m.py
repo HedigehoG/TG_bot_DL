@@ -24,6 +24,7 @@ from instagrapi.exceptions import (  # Исключения из instagrapi
 )
 from pydantic import ValidationError
 import pyshorteners
+import musicbrainzngs as mb
 
 # pip install google-genai
 from google import genai
@@ -2062,6 +2063,55 @@ def normalize_for_match(s: str) -> str:
     return re.sub(r"[^a-zа-я0-9]", "", s.lower())
 
 
+async def clarify_song_with_musicbrainz(song_name: str) -> Optional[dict]:
+    """
+    Уточняет название песни и исполнителя через MusicBrainz API.
+    Возвращает словарь с уточненными данными или None, если ничего не найдено.
+    """
+    # Устанавливаем User-Agent, как того требует MusicBrainz
+    mb.set_useragent("TGMusicBot/1.0", "1.0", "https://github.com/HedigehoG/TG_bot_DL")
+
+    try:
+        # Используем asyncio.to_thread для запуска синхронной функции в асинхронном коде
+        def _search():
+            # Ищем записи (recordings) с точным совпадением по названию трека
+            result = mb.search_recordings(query=song_name, strict=True, limit=5)
+            return result
+
+        search_result = await asyncio.to_thread(_search)
+
+        recordings = search_result.get("recording-list", [])
+        if not recordings:
+            logging.info(f"MusicBrainz не нашел точных совпадении для '{song_name}'")
+            return None
+
+        # Выбираем лучший результат (обычно первый с score=100)
+        best_match = recordings[0]
+        if best_match.get("ext:score") != "100":
+            logging.info(f"Лучший результат для '{song_name}' в MusicBrainz имеет score < 100. Пропускаем.")
+            return None
+
+        # Собираем каноническое имя исполнителя
+        artist_credit = best_match.get("artist-credit", [])
+        artist_name = "".join([part["artist"]["name"] + (part.get("joinphrase", "")) for part in artist_credit])
+
+        title = best_match.get("title")
+        duration_ms = int(best_match.get("length", 0))
+
+        if not all([artist_name, title, duration_ms > 0]):
+            return None
+
+        clarified_info = {
+            "song": f"{artist_name} - {title}",
+            "duration": duration_ms // 1000,
+        }
+        logging.info(f"MusicBrainz уточнил '{song_name}' -> '{clarified_info['song']}' ({clarified_info['duration']}s)")
+        return clarified_info
+
+    except Exception as e:
+        logging.error(f"Ошибка при запросе к MusicBrainz API: {e}")
+        return None
+
 async def handle_song_search(message: Message, song_obj: dict):
     """
     Обрабатывает запрос на поиск песни, используя несколько источников параллельно.
@@ -2069,10 +2119,20 @@ async def handle_song_search(message: Message, song_obj: dict):
     Если точных совпадений нет, собирает все частичные совпадения и предлагает пользователю выбор.
     """
     song_name = song_obj.get("song")
-    duration = song_obj.get("duration") or 0
-    normalized_query = normalize_for_match(song_name)
+    original_duration = song_obj.get("duration") or 0
 
     status_msg = await message.answer(f"🎤 Ищу «{song_name}»...")
+
+    # --- Шаг 1: Уточнение через MusicBrainz ---
+    clarified_info = await clarify_song_with_musicbrainz(song_name)
+    if clarified_info:
+        song_name = clarified_info["song"]
+        duration = clarified_info["duration"]
+        await status_msg.edit_text(f"✅ Уточнено: «{song_name}». Начинаю поиск...")
+    else:
+        duration = original_duration
+
+    normalized_query = normalize_for_match(song_name)
 
     # Внутренняя функция для поиска и фильтрации на одном источнике
     async def _search_and_filter_provider(provider_config: dict) -> tuple[list, list]:

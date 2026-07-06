@@ -4,6 +4,7 @@ aiohttp-socks
 beautifulsoup4
 google-genai
 instagrapi
+musicbrainzngs
 pydantic
 pyshorteners
 python-dotenv
