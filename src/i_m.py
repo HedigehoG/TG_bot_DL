@@ -1781,6 +1781,10 @@ def _extractor_mp3iq(item: BeautifulSoup, base_url: str) -> Optional[dict]:
     if not all([link, duration_ms, artist_a, title_a]):
         return None
 
+    # Некоторые ссылки могут содержать '#', который ломает URL.
+    # Очищаем ссылку, оставляя только часть до этого символа.
+    link = link.split("#")[0]
+
     try:
         duration_sec = int(duration_ms) // 1000
     except (ValueError, TypeError):
