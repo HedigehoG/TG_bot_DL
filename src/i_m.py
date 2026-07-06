@@ -62,6 +62,8 @@ logging.basicConfig(
 # про SocketClosed, который является нормальным поведением при закрытии соединения.
 logging.getLogger("stem").setLevel(logging.WARNING)
 # Понижаем уровень логирования для aiohttp, чтобы убрать "шум" от сканеров.
+# Подавляем "шум" от библиотеки musicbrainzngs
+logging.getLogger("musicbrainzngs").setLevel(logging.WARNING)
 # Ошибки (например, 500) все равно будут отображаться.
 logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 logging.getLogger("aiohttp.web").setLevel(logging.WARNING)
@@ -1990,8 +1992,12 @@ async def _parse_music_site(config: dict, song_name: str) -> Optional[list]:
     for item in song_list:
         try:
             song_data = config["extractor_func"](item, config["base_url"])
-            if song_data and all(song_data.values()):
+            # Улучшенная проверка: убеждаемся, что ссылка (link) не пустая.
+            if song_data and song_data.get("link"):
                 parsed_songs.append(song_data)
+            elif song_data:
+                # Логируем, если парсер вернул данные, но без ссылки
+                logging.warning(f"Парсер для {config['name']} вернул результат без ссылки: {song_data}")
         except Exception as e:
             logging.warning(f"Не удалось распарсить элемент на {config['name']}: {e}")
             continue
@@ -2012,8 +2018,8 @@ SEARCH_PROVIDER_CONFIGS = [
         "search_path": "/search/?q={query}",
         "item_selector": "div.mp3",
         "extractor_func": _extractor_sefon_pro,
-        "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"},
-        "proxy": None,  # Больше не требуется прокси
+        "headers": {**BASE_HEADERS, "Referer": "https://sefon.pro/"}, # Добавляем Referer, чтобы обойти ошибку 403 Forbidden
+        "proxy": "russian",  # Теперь требуется российский прокси
     },
     {
         "name": "muzika.fun",
@@ -2181,6 +2187,12 @@ async def handle_song_search(message: Message, song_obj: dict):
                     )
 
                 best_match = exact_matches[0]
+                
+                # Дополнительная проверка перед скачиванием
+                if not best_match.get("link"):
+                    logging.error(f"Найдено точное совпадение, но ссылка пуста: {best_match}")
+                    # Пропускаем этот результат и продолжаем поиск
+                    continue
 
                 await status_msg.edit_text("✅ Найдено точное совпадение, скачиваю...")
                 audio_data = await download_audio(best_match.get("link"))
